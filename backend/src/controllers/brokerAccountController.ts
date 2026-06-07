@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Response } from "express";
 import { z } from "zod";
 import { prisma } from "../utils/prisma";
@@ -118,14 +119,18 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
     }
   }
 
+  // ID'ni oldindan generatsiya qilamiz - shifrlangan qiymatlarni shu yozuvga
+  // "bog'lash" (AAD context) uchun u shifrlashdan oldin ma'lum bo'lishi kerak
+  const accountId = crypto.randomUUID();
   const account = await prisma.brokerAccount.create({
     data: {
+      id: accountId,
       userId: req.user!.id,
       exchange: data.exchange,
       label: data.label ?? data.exchange,
-      apiKeyEncrypted: encryptSecret(data.apiKey),
-      apiSecretEncrypted: encryptSecret(data.apiSecret),
-      passphraseEncrypted: data.passphrase ? encryptSecret(data.passphrase) : undefined,
+      apiKeyEncrypted: encryptSecret(data.apiKey, `${accountId}:apiKey`),
+      apiSecretEncrypted: encryptSecret(data.apiSecret, `${accountId}:apiSecret`),
+      passphraseEncrypted: data.passphrase ? encryptSecret(data.passphrase, `${accountId}:passphrase`) : undefined,
       server: data.exchange === "MT5" ? data.server : undefined,
       mode: data.mode,
       riskLevel: data.riskLevel,
@@ -158,13 +163,15 @@ export const createDemoAccount = asyncHandler(async (req: AuthedRequest, res: Re
     return res.json({ account: { ...serialize(existingDemo), apiKeyMasked: "DEMO-MODE" } });
   }
 
+  const demoAccountId = crypto.randomUUID();
   const account = await prisma.brokerAccount.create({
     data: {
+      id: demoAccountId,
       userId: req.user!.id,
       exchange: "Demo",
       label: "Bepul Demo hisob (virtual)",
-      apiKeyEncrypted: encryptSecret("demo"),
-      apiSecretEncrypted: encryptSecret("demo"),
+      apiKeyEncrypted: encryptSecret("demo", `${demoAccountId}:apiKey`),
+      apiSecretEncrypted: encryptSecret("demo", `${demoAccountId}:apiSecret`),
       mode: "SIGNAL_ONLY",
       riskLevel: 2,
       balanceUsd: 10_000,

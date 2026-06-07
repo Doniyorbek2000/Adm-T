@@ -243,11 +243,11 @@ function isRealExchangeTrade(trade: { executionMode: string; brokerAccount: { ex
 }
 
 /** Hisob kalitlarini (va mavjud bo'lsa, passphrase'ni) deshifrlaydi - faqat haqiqiy birja so'rovlari uchun ishlatiladi */
-function decryptCredentials(account: { apiKeyEncrypted: string; apiSecretEncrypted: string; passphraseEncrypted?: string | null }): ExchangeCredentials {
+function decryptCredentials(account: { id: string; apiKeyEncrypted: string; apiSecretEncrypted: string; passphraseEncrypted?: string | null }): ExchangeCredentials {
   return {
-    apiKey: decryptSecret(account.apiKeyEncrypted),
-    apiSecret: decryptSecret(account.apiSecretEncrypted),
-    passphrase: account.passphraseEncrypted ? decryptSecret(account.passphraseEncrypted) : undefined,
+    apiKey: decryptSecret(account.apiKeyEncrypted, `${account.id}:apiKey`),
+    apiSecret: decryptSecret(account.apiSecretEncrypted, `${account.id}:apiSecret`),
+    passphrase: account.passphraseEncrypted ? decryptSecret(account.passphraseEncrypted, `${account.id}:passphrase`) : undefined,
   };
 }
 
