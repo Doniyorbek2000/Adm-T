@@ -18,6 +18,7 @@ const USER_NAV: NavItem[] = [
   { href: "/dashboard/trades", label: "Savdolar tarixi", icon: "📈" },
   { href: "/dashboard/subscription", label: "Tarif / Obuna", icon: "💳" },
   { href: "/dashboard/notifications", label: "Bildirishnomalar", icon: "🔔" },
+  { href: "/dashboard/support", label: "Yordam", icon: "💬" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -26,6 +27,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/signals", label: "AI signallari", icon: "📡" },
   { href: "/admin/plans", label: "Tarif rejalari", icon: "💳" },
   { href: "/admin/trades", label: "Savdolar", icon: "📈" },
+  { href: "/admin/support", label: "Xabarlar / Yordam", icon: "💬" },
 ];
 
 export function DashboardShell({

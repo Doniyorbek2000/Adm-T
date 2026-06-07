@@ -35,4 +35,7 @@ export const PaymentStatus = {
 } as const;
 export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
 
+export const SenderRole = { USER: "USER", ADMIN: "ADMIN" } as const;
+export type SenderRole = (typeof SenderRole)[keyof typeof SenderRole];
+
 export const PLAN_ORDER: PlanType[] = [PlanType.FREE, PlanType.PRO, PlanType.ULTRA, PlanType.VIP];

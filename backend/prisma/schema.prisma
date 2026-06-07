@@ -24,10 +24,11 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  brokerAccounts BrokerAccount[]
-  trades         Trade[]
-  payments       Payment[]
-  notifications  Notification[]
+  brokerAccounts  BrokerAccount[]
+  trades          Trade[]
+  payments        Payment[]
+  notifications   Notification[]
+  supportMessages SupportMessage[]
 }
 
 // Foydalanuvchining birja/broker hisobini ulashi (API kalitlar saqlanadi - shifrlangan)
@@ -114,6 +115,18 @@ model Payment {
   periodStart DateTime @default(now())
   periodEnd   DateTime
   createdAt   DateTime @default(now())
+}
+
+// Foydalanuvchi va admin o'rtasidagi qo'llab-quvvatlash yozishmalari (har bir
+// foydalanuvchi uchun bitta umumiy "thread" - admin javob yozadi)
+model SupportMessage {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderRole String // USER | ADMIN - xabarni kim yozganini bildiradi
+  body       String
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
 }
 
 // Foydalanuvchiga tizim xabarnomalari (signal, to'lov, tizim yangilanishi va h.k.)

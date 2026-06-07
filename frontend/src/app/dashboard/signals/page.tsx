@@ -105,6 +105,13 @@ function SignalCard({ signal }: { signal: SignalDto }) {
   }
 
   const isBuy = signal.direction === "BUY";
+  const confidence = signal.confidence;
+  const confidenceTier =
+    confidence >= 85
+      ? { label: "Juda yuqori aniqlik", className: "text-emerald-400", bar: "bg-emerald-400" }
+      : confidence >= 70
+      ? { label: "Yuqori aniqlik", className: "text-sky-400", bar: "bg-sky-400" }
+      : { label: "O'rta aniqlik", className: "text-amber-400", bar: "bg-amber-400" };
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
@@ -121,21 +128,43 @@ function SignalCard({ signal }: { signal: SignalDto }) {
         >
           {isBuy ? "▲ XARID (BUY)" : "▼ SOTISH (SELL)"}
         </span>
-        <span className="text-xs text-slate-400">Ishonch: {signal.confidence}%</span>
+      </div>
+
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-400">AI aniqlik darajasi</span>
+          <span className={`font-bold ${confidenceTier.className}`}>{confidence}% — {confidenceTier.label}</span>
+        </div>
+        <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-white/5">
+          <div className={`h-full rounded-full ${confidenceTier.bar}`} style={{ width: `${confidence}%` }} />
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-        <PriceBox label="Kirish" value={signal.entryPrice} />
-        <PriceBox label="Take-Profit" value={signal.takeProfit} positive />
-        <PriceBox label="Stop-Loss" value={signal.stopLoss} negative />
+        <PriceBox label="Kirish narxi" value={signal.entryPrice} />
+        <PriceBox label="Take-Profit (yopish)" value={signal.takeProfit} positive />
+        <PriceBox label="Stop-Loss (yopish)" value={signal.stopLoss} negative />
       </div>
+
+      {signal.status === "ACTIVE" && signal.entryPrice != null && (
+        <p className="mt-3 rounded-lg bg-white/5 px-3 py-2.5 text-xs leading-relaxed text-slate-300">
+          💡 <span className="font-semibold">AI tavsiyasi:</span> {signal.entryPrice} narx atrofida{" "}
+          <span className={isBuy ? "font-semibold text-emerald-300" : "font-semibold text-rose-300"}>
+            {isBuy ? "xarid pozitsiyasini oching" : "sotish pozitsiyasini oching"}
+          </span>
+          , <span className="font-semibold text-emerald-300">{signal.takeProfit}</span> narxda foyda bilan yoping
+          yoki <span className="font-semibold text-rose-300">{signal.stopLoss}</span> narxga tushsa, zararni cheklash uchun yoping.
+          Ushbu signal <span className={`font-semibold ${confidenceTier.className}`}>{confidence}% aniqlikda</span> baholangan
+          — qanchalik yuqori bo'lsa, AI shunchalik ishonchli.
+        </p>
+      )}
 
       {signal.analysis && <p className="mt-4 text-sm leading-relaxed text-slate-400">🤖 {signal.analysis}</p>}
 
       {signal.resultPnlPct != null && (
         <p className={`mt-3 text-sm font-semibold ${signal.resultPnlPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-          Natija: {signal.resultPnlPct >= 0 ? "+" : ""}
-          {signal.resultPnlPct.toFixed(2)}%
+          Yakuniy natija: {signal.resultPnlPct >= 0 ? "+" : ""}
+          {signal.resultPnlPct.toFixed(2)}% ({signal.resultPnlPct >= 0 ? "Take-Profit'ga yetdi ✅" : "Stop-Loss'ga tegdi ⚠️"})
         </p>
       )}
 

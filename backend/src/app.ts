@@ -10,6 +10,7 @@ import tradeRoutes from "./routes/tradeRoutes";
 import planRoutes from "./routes/planRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
+import supportRoutes from "./routes/supportRoutes";
 import adminRoutes from "./routes/adminRoutes";
 
 export const app = express();
@@ -28,6 +29,7 @@ app.use("/api/trades", tradeRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.use(notFoundHandler);
