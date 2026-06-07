@@ -11,6 +11,7 @@ interface AccountDto {
   exchange: string;
   label: string;
   apiKeyMasked: string;
+  server?: string | null;
   isConnected: boolean;
   mode: "SIGNAL_ONLY" | "AUTO_TRADE";
   riskLevel: number;
@@ -120,7 +121,10 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-semibold">{acc.label}</p>
-                <p className="text-xs text-slate-400">{acc.exchange} • {acc.apiKeyMasked}</p>
+                <p className="text-xs text-slate-400">
+                  {acc.exchange} • {acc.apiKeyMasked}
+                  {acc.exchange === "MT5" && acc.server ? ` • ${acc.server}` : ""}
+                </p>
               </div>
               <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${acc.isConnected ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-500/15 text-slate-300"}`}>
                 {acc.isConnected ? t("dash.accounts.connected") : t("dash.accounts.disconnected")}
@@ -196,6 +200,8 @@ function ConnectAccountForm({
   const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
+  const [server, setServer] = useState("");
+  const isMt5 = exchange === "MT5";
   const [mode, setMode] = useState<"SIGNAL_ONLY" | "AUTO_TRADE">("SIGNAL_ONLY");
   const [riskLevel, setRiskLevel] = useState(2);
   const [submitting, setSubmitting] = useState(false);
@@ -210,7 +216,15 @@ function ConnectAccountForm({
       await apiRequest("/broker-accounts", {
         method: "POST",
         token,
-        body: { exchange, label: label || undefined, apiKey, apiSecret, mode, riskLevel },
+        body: {
+          exchange,
+          label: label || undefined,
+          apiKey,
+          apiSecret,
+          server: isMt5 ? server : undefined,
+          mode,
+          riskLevel,
+        },
       });
       onSuccess();
     } catch (err) {
@@ -233,7 +247,7 @@ function ConnectAccountForm({
             onChange={(e) => setExchange(e.target.value)}
             className="w-full rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
           >
-            {["Binance", "Bybit", "OKX", "KuCoin"].map((ex) => (
+            {["Binance", "Bybit", "OKX", "KuCoin", "BingX", "MT5"].map((ex) => (
               <option key={ex} value={ex}>
                 {ex}
               </option>
@@ -251,7 +265,9 @@ function ConnectAccountForm({
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-slate-300">{t("dash.accounts.apiKey")}</label>
+          <label className="mb-1.5 block text-sm font-medium text-slate-300">
+            {t(isMt5 ? "dash.accounts.mt5Login" : "dash.accounts.apiKey")}
+          </label>
           <input
             required
             value={apiKey}
@@ -260,7 +276,9 @@ function ConnectAccountForm({
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-slate-300">{t("dash.accounts.apiSecret")}</label>
+          <label className="mb-1.5 block text-sm font-medium text-slate-300">
+            {t(isMt5 ? "dash.accounts.mt5Password" : "dash.accounts.apiSecret")}
+          </label>
           <input
             required
             type="password"
@@ -269,6 +287,18 @@ function ConnectAccountForm({
             className="w-full rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
           />
         </div>
+        {isMt5 && (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-300">{t("dash.accounts.mt5Server")}</label>
+            <input
+              required
+              value={server}
+              onChange={(e) => setServer(e.target.value)}
+              placeholder={t("dash.accounts.mt5ServerPlaceholder")}
+              className="w-full rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
+            />
+          </div>
+        )}
       </div>
 
       <div>

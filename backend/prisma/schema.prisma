@@ -36,10 +36,11 @@ model BrokerAccount {
   id                 String   @id @default(cuid())
   userId             String
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  exchange           String // masalan: Binance, Bybit, OKX, Demo
+  exchange           String // masalan: Binance, Bybit, OKX, KuCoin, BingX, MT5, Demo
   label              String   @default("Asosiy hisob")
-  apiKeyEncrypted    String
-  apiSecretEncrypted String
+  apiKeyEncrypted    String // MT5 uchun: hisob login raqami
+  apiSecretEncrypted String // MT5 uchun: hisob paroli
+  server             String? // faqat MT5 uchun: broker server nomi (masalan, Exness-MT5Real)
   isConnected        Boolean  @default(true)
   mode               String   @default("SIGNAL_ONLY") // SIGNAL_ONLY | AUTO_TRADE
   riskLevel          Int      @default(2) // 1 - past, 2 - o'rta, 3 - yuqori

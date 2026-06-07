@@ -20,8 +20,9 @@ import { PLAN_LIMITS } from "../services/planLimits";
 const connectSchema = z.object({
   exchange: z.string().min(2),
   label: z.string().optional(),
-  apiKey: z.string().min(4),
-  apiSecret: z.string().min(4),
+  apiKey: z.string().min(4), // MT5 uchun: hisob login raqami
+  apiSecret: z.string().min(4), // MT5 uchun: hisob paroli
+  server: z.string().min(2).optional(), // faqat MT5 uchun: broker server nomi
   mode: z.enum(["SIGNAL_ONLY", "AUTO_TRADE"]).default("SIGNAL_ONLY"),
   riskLevel: z.number().int().min(1).max(3).default(2),
 });
@@ -39,6 +40,7 @@ function serialize(account: any) {
     exchange: account.exchange,
     label: account.label,
     apiKeyMasked: maskSecret(account.apiKeyEncrypted ? account.exchange : ""), // placeholder, real masked value set below
+    server: account.server ?? null,
     isConnected: account.isConnected,
     mode: account.mode,
     riskLevel: account.riskLevel,
@@ -78,9 +80,10 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
     data: {
       userId: req.user!.id,
       exchange: data.exchange,
-      label: data.label ?? `${data.exchange} hisobi`,
+      label: data.label ?? data.exchange,
       apiKeyEncrypted: encryptSecret(data.apiKey),
       apiSecretEncrypted: encryptSecret(data.apiSecret),
+      server: data.exchange === "MT5" ? data.server : undefined,
       mode: data.mode,
       riskLevel: data.riskLevel,
       balanceUsd: 1000, // demo/boshlang'ich virtual balans (real integratsiyada birjadan olinadi)
