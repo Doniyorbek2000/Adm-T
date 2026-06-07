@@ -17,4 +17,8 @@ export const env = {
   adminEmail: process.env.ADMIN_EMAIL ?? "admin@admtrading.uz",
   adminPassword: process.env.ADMIN_PASSWORD ?? "Admin123!",
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
+  // "testnet" (standart, xavfsiz sinov muhiti - sun'iy mablag') yoki "live"
+  // (haqiqiy birja, REAL pul bilan ishlaydi). Productionga o'tishdan oldin
+  // operatsion jamoa tomonidan ongli ravishda "live" ga o'rnatilishi shart.
+  exchangeMode: (process.env.EXCHANGE_MODE === "live" ? "live" : "testnet") as "testnet" | "live",
 };

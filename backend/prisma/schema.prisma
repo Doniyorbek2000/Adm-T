@@ -86,6 +86,8 @@ model Trade {
   pnlUsd          Float?
   status          String         @default("OPEN") // OPEN | CLOSED
   executedByAi    Boolean        @default(true)
+  executionMode   String         @default("SIMULATED") // SIMULATED | TESTNET | LIVE - savdo qanday muhitda bajarilgani
+  externalOrderId String? // ulangan birjadagi haqiqiy buyurtma ID (TESTNET/LIVE uchun, audit va solishtirish maqsadida)
   openedAt        DateTime       @default(now())
   closedAt        DateTime?
 }

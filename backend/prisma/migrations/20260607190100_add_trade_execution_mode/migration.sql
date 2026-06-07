@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Trade" ADD COLUMN "executionMode" TEXT NOT NULL DEFAULT 'SIMULATED';
+ALTER TABLE "Trade" ADD COLUMN "externalOrderId" TEXT;

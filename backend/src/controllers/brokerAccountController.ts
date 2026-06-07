@@ -5,6 +5,7 @@ import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { encryptSecret, maskSecret } from "../utils/crypto";
 import { PLAN_LIMITS } from "../services/planLimits";
+import { BinanceApiError, exchangeMode, fetchUsdtBalance } from "../services/exchanges/binance";
 
 /**
  * Hisob ulash logikasi:
@@ -76,6 +77,39 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
     );
   }
 
+  // Binance uchun API kalit/maxfiy so'zni HAQIQIY birjada tekshiramiz va
+  // boshlang'ich balansni birjadan olamiz - bu (1) noto'g'ri/yaroqsiz
+  // kalitlarni darhol aniqlaydi (xavfsizlik), (2) foydalanuvchiga soxta emas,
+  // balki haqiqiy balansni ko'rsatadi.
+  let initialBalance = 1000; // boshqa (hali integratsiya qilinmagan) birjalar uchun virtual boshlang'ich balans
+  let connectionNotice = "";
+  if (data.exchange === "Binance") {
+    try {
+      initialBalance = await fetchUsdtBalance(data.apiKey, data.apiSecret);
+      connectionNotice =
+        exchangeMode() === "live"
+          ? " Hisobingiz Binance'ning HAQIQIY (live) muhitiga ulandi - AI sizning real mablag'ingiz bilan ishlaydi."
+          : " Hisobingiz hozircha Binance TESTNET (sinov) muhitiga ulangan - AI sun'iy test mablag'i bilan ishlaydi, real pulingizga hech qanday ta'sir qilmaydi.";
+    } catch (err) {
+      if (err instanceof BinanceApiError && err.code !== undefined) {
+        // Binance o'zi aniq xato kodi bilan rad etdi (masalan, -2014/-2015 -
+        // noto'g'ri kalit yoki ruxsat) - bu haqiqatan ham kalit muammosi
+        throw new AppError(
+          "Binance API kalit/maxfiy so'zini tasdiqlab bo'lmadi. Iltimos: (1) kalit va maxfiy so'z to'g'ri kiritilganini, (2) 'Enable Spot & Margin Trading' ruxsati yoqilganini, (3) IP cheklovlari to'g'ri sozlanganini tekshiring.",
+          400
+        );
+      }
+      // Binance'dan aniq xato kodisiz javob (masalan, tarmoq, hosting provayder
+      // yoki mintaqaviy bloklash) - bu kalitning o'zi emas, ulanish muammosi
+      // bo'lishi mumkin, shuning uchun foydalanuvchini chalkashtirmaslik uchun
+      // umumiyroq xabar beramiz
+      throw new AppError(
+        "Binance bilan bog'lanib bo'lmadi. Bu serveringiz joylashgan mintaqa/IP Binance tomonidan cheklangani yoki birja vaqtinchalik javob bermayotgani sababli bo'lishi mumkin. Internet aloqangizni va kalitlaringizni tekshirib, birozdan so'ng qayta urinib ko'ring.",
+        502
+      );
+    }
+  }
+
   const account = await prisma.brokerAccount.create({
     data: {
       userId: req.user!.id,
@@ -86,7 +120,7 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
       server: data.exchange === "MT5" ? data.server : undefined,
       mode: data.mode,
       riskLevel: data.riskLevel,
-      balanceUsd: 1000, // demo/boshlang'ich virtual balans (real integratsiyada birjadan olinadi)
+      balanceUsd: initialBalance,
     },
   });
 
@@ -96,7 +130,7 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
       title: "Hisob muvaffaqiyatli ulandi",
       message: `${account.exchange} (${account.label}) hisobingiz ulandi. Rejim: ${
         account.mode === "AUTO_TRADE" ? "AI to'liq avtomatik savdo qiladi" : "Faqat AI signallarini olasiz"
-      }.`,
+      }.${connectionNotice}`,
     },
   });
 
