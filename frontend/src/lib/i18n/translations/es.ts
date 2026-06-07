@@ -217,6 +217,8 @@ const es: Record<TranslationKey, string> = {
   "dash.accounts.mt5Password": "Contraseña (o contraseña de inversor)",
   "dash.accounts.mt5Server": "Servidor del bróker",
   "dash.accounts.mt5ServerPlaceholder": "p. ej. Exness-MT5Real8",
+  "dash.accounts.passphrase": "Frase de contraseña de API",
+  "dash.accounts.passphrasePlaceholder": "Requerida para OKX/KuCoin",
   "dash.accounts.modeLabel": "Modo de operación",
   "dash.accounts.modeSignalTitle": "📡 Solo señales",
   "dash.accounts.modeSignalText": "La IA proporciona análisis y señales; tú realizas las operaciones.",

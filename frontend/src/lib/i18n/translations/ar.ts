@@ -217,6 +217,8 @@ const ar: Record<TranslationKey, string> = {
   "dash.accounts.mt5Password": "كلمة المرور (أو كلمة مرور المستثمر)",
   "dash.accounts.mt5Server": "خادم الوسيط",
   "dash.accounts.mt5ServerPlaceholder": "مثال: Exness-MT5Real8",
+  "dash.accounts.passphrase": "عبارة مرور API",
+  "dash.accounts.passphrasePlaceholder": "مطلوبة لـ OKX/KuCoin",
   "dash.accounts.modeLabel": "وضع التداول",
   "dash.accounts.modeSignalTitle": "📡 الإشارات فقط",
   "dash.accounts.modeSignalText": "يقدّم الذكاء الاصطناعي التحليلات والإشارات؛ وأنت من ينفذ الصفقات.",

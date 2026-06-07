@@ -217,6 +217,8 @@ const zh: Record<TranslationKey, string> = {
   "dash.accounts.mt5Password": "密码（或只读密码）",
   "dash.accounts.mt5Server": "经纪商服务器",
   "dash.accounts.mt5ServerPlaceholder": "例如 Exness-MT5Real8",
+  "dash.accounts.passphrase": "API 口令（passphrase）",
+  "dash.accounts.passphrasePlaceholder": "OKX/KuCoin 必填",
   "dash.accounts.modeLabel": "交易模式",
   "dash.accounts.modeSignalTitle": "📡 仅信号",
   "dash.accounts.modeSignalText": "AI 提供分析与信号，交易由您本人执行。",

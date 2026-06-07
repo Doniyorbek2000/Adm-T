@@ -40,6 +40,7 @@ model BrokerAccount {
   label              String   @default("Asosiy hisob")
   apiKeyEncrypted    String // MT5 uchun: hisob login raqami
   apiSecretEncrypted String // MT5 uchun: hisob paroli
+  passphraseEncrypted String? // faqat OKX/KuCoin uchun: API passphrase (maxfiy ibora), shifrlangan holda
   server             String? // faqat MT5 uchun: broker server nomi (masalan, Exness-MT5Real)
   isConnected        Boolean  @default(true)
   mode               String   @default("SIGNAL_ONLY") // SIGNAL_ONLY | AUTO_TRADE

@@ -201,7 +201,9 @@ function ConnectAccountForm({
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [server, setServer] = useState("");
+  const [passphrase, setPassphrase] = useState("");
   const isMt5 = exchange === "MT5";
+  const requiresPassphrase = exchange === "OKX" || exchange === "KuCoin";
   const [mode, setMode] = useState<"SIGNAL_ONLY" | "AUTO_TRADE">("SIGNAL_ONLY");
   const [riskLevel, setRiskLevel] = useState(2);
   const [submitting, setSubmitting] = useState(false);
@@ -221,6 +223,7 @@ function ConnectAccountForm({
           label: label || undefined,
           apiKey,
           apiSecret,
+          passphrase: requiresPassphrase ? passphrase : undefined,
           server: isMt5 ? server : undefined,
           mode,
           riskLevel,
@@ -295,6 +298,19 @@ function ConnectAccountForm({
               value={server}
               onChange={(e) => setServer(e.target.value)}
               placeholder={t("dash.accounts.mt5ServerPlaceholder")}
+              className="w-full rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
+            />
+          </div>
+        )}
+        {requiresPassphrase && (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-300">{t("dash.accounts.passphrase")}</label>
+            <input
+              required
+              type="password"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              placeholder={t("dash.accounts.passphrasePlaceholder")}
               className="w-full rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
             />
           </div>

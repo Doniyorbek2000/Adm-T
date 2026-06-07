@@ -220,6 +220,8 @@ const en = {
   "dash.accounts.mt5Password": "Password (or investor password)",
   "dash.accounts.mt5Server": "Broker server",
   "dash.accounts.mt5ServerPlaceholder": "e.g. Exness-MT5Real8",
+  "dash.accounts.passphrase": "API passphrase",
+  "dash.accounts.passphrasePlaceholder": "Required for OKX/KuCoin (secret phrase)",
   "dash.accounts.modeLabel": "Trading mode",
   "dash.accounts.modeSignalTitle": "📡 Signals only",
   "dash.accounts.modeSignalText": "The AI provides analysis and signals; you place the trades.",

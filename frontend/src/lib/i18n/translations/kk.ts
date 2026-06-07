@@ -217,6 +217,8 @@ const kk: Record<TranslationKey, string> = {
   "dash.accounts.mt5Password": "Құпия сөз (немесе инвестор құпия сөзі)",
   "dash.accounts.mt5Server": "Брокер сервері",
   "dash.accounts.mt5ServerPlaceholder": "мысалы, Exness-MT5Real8",
+  "dash.accounts.passphrase": "API passphrase (құпия сөз тіркесі)",
+  "dash.accounts.passphrasePlaceholder": "OKX/KuCoin үшін міндетті",
   "dash.accounts.modeLabel": "Сауда режимі",
   "dash.accounts.modeSignalTitle": "📡 Тек сигналдар",
   "dash.accounts.modeSignalText": "ЖИ талдау мен сигналдарды ұсынады; мәмілелерді сіз жасайсыз.",

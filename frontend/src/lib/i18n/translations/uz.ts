@@ -217,6 +217,8 @@ const uz: Record<TranslationKey, string> = {
   "dash.accounts.mt5Password": "Parol (yoki investor paroli)",
   "dash.accounts.mt5Server": "Broker serveri",
   "dash.accounts.mt5ServerPlaceholder": "masalan, Exness-MT5Real8",
+  "dash.accounts.passphrase": "API passphrase (maxfiy ibora)",
+  "dash.accounts.passphrasePlaceholder": "OKX/KuCoin uchun majburiy",
   "dash.accounts.modeLabel": "Savdo rejimi",
   "dash.accounts.modeSignalTitle": "📡 Faqat signallar",
   "dash.accounts.modeSignalText": "AI tahlil va signallar beradi; savdolarni siz amalga oshirasiz.",

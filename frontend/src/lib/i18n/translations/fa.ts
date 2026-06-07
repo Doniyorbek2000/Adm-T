@@ -217,6 +217,8 @@ const fa: Record<TranslationKey, string> = {
   "dash.accounts.mt5Password": "رمز عبور (یا رمز عبور سرمایه‌گذار)",
   "dash.accounts.mt5Server": "سرور کارگزار",
   "dash.accounts.mt5ServerPlaceholder": "مثلاً Exness-MT5Real8",
+  "dash.accounts.passphrase": "عبارت عبور API",
+  "dash.accounts.passphrasePlaceholder": "برای OKX/KuCoin الزامی است",
   "dash.accounts.modeLabel": "حالت معاملاتی",
   "dash.accounts.modeSignalTitle": "📡 فقط سیگنال",
   "dash.accounts.modeSignalText": "هوش مصنوعی تحلیل و سیگنال ارائه می‌دهد؛ شما معامله را انجام می‌دهید.",

@@ -1,13 +1,8 @@
 import { PlanType, SignalDirection, SignalStatus } from "../constants/enums";
 import { prisma } from "../utils/prisma";
 import { decryptSecret } from "../utils/crypto";
-import {
-  averageFillPrice,
-  exchangeMode,
-  fetchSpotPrice,
-  fetchUsdtBalance,
-  placeMarketOrder,
-} from "./exchanges/binance";
+import { exchangeMode, fetchSpotPrice } from "./exchanges/binance";
+import { ExchangeAdapter, ExchangeCredentials, getExchangeAdapter, isRealExchangeIntegrated } from "./exchanges/registry";
 
 /**
  * ADM Trading AI Engine
@@ -20,20 +15,25 @@ import {
  *      avtomatik savdo (trade) ochadi va yopadi - foydalanuvchi ishtirokisiz
  *
  * REAL vs SIMULYATSIYA - MUHIM:
- *   - "Binance" turidagi va ulangan (isConnected) hisoblar uchun AI haqiqiy
- *     Binance API orqali bozor buyurtmalarini joylashtiradi (EXCHANGE_MODE
- *     muhit o'zgaruvchisiga qarab "testnet" sinov muhitida yoki "live" da -
- *     productionda REAL pul bilan). Har bir trade'ning `executionMode` maydoni
- *     uning qaysi muhitda bajarilganini ko'rsatadi: SIMULATED | TESTNET | LIVE.
+ *   - Real REST API integratsiyasiga ega birjalar - Binance, Bybit, OKX,
+ *     KuCoin, BingX (qarang: services/exchanges/registry.ts) - uchun, agar
+ *     hisob ulangan (isConnected) va AUTO_TRADE rejimida bo'lsa, AI HAQIQIY
+ *     bozor buyurtmalarini joylashtiradi (EXCHANGE_MODE muhit o'zgaruvchisiga
+ *     qarab "testnet"/sandbox sinov muhitida yoki "live" da - productionda
+ *     REAL pul bilan). Har bir trade'ning `executionMode` maydoni uning qaysi
+ *     muhitda bajarilganini ko'rsatadi: SIMULATED | TESTNET | LIVE.
  *   - Spot (oddiy) hisoblarda "SHORT" pozitsiya ochib bo'lmaydi, shuning uchun
- *     SELL yo'nalishidagi signallar Binance spot hisoblarda avtomatik
- *     bajarilmaydi - faqat signal sifatida qoladi (xavfsizlik chorasi).
- *   - Boshqa birja turlari (Bybit, OKX, KuCoin, BingX, MT5, Demo) uchun hali
- *     real integratsiya yo'q - ular uchun savdo natijalari mantiqiy modelga
- *     asoslangan deterministik-tasodifiy generator orqali simulyatsiya
- *     qilinadi (executionMode = SIMULATED). Bu UI/UX va butun zanjirni
- *     (signal -> avto-treding -> natija) odam ishtirokisiz namoyish etish
- *     uchun yetarli, lekin haqiqiy birja bilan bog'liq emas.
+ *     SELL yo'nalishidagi signallar real spot hisoblarda avtomatik
+ *     bajarilmaydi - faqat signal sifatida qoladi (xavfsizlik chorasi,
+ *     fyuchers/marja savdosi - yuqori tavakkal va likvidatsiya xavfi tufayli
+ *     hozircha qo'llab-quvvatlanmaydi).
+ *   - MT5 va "Demo" hisoblar uchun hali real integratsiya yo'q: MetaTrader 5
+ *     boshqa birjalardan farqli o'laroq ommaviy REST API'ga ega emas (Windows
+ *     terminal protokoli) - haqiqiy ulanish uchun alohida "bridge" xizmati
+ *     (masalan, MetaApi.cloud kabi uchinchi tomon SaaS yoki maxsus Expert
+ *     Advisor + WebSocket ko'prigi) talab qilinadi. Bunday hisoblar uchun
+ *     savdo natijalari mantiqiy modelga asoslangan deterministik-tasodifiy
+ *     generator orqali simulyatsiya qilinadi (executionMode = SIMULATED).
  */
 
 const SYMBOLS = [
@@ -207,8 +207,8 @@ async function closeTradesForSignal(signalId: string, fallbackExitPrice: number,
   });
 
   for (const trade of openTrades) {
-    if (isRealBinanceTrade(trade)) {
-      await closeRealBinanceTrade(trade, trade.brokerAccount!, fallbackExitPrice, fallbackResultPnlPct);
+    if (isRealExchangeTrade(trade)) {
+      await closeRealExchangeTrade(trade, trade.brokerAccount!, fallbackExitPrice, fallbackResultPnlPct);
     } else {
       await closeSimulatedTrade(trade, fallbackExitPrice, fallbackResultPnlPct);
     }
@@ -227,19 +227,28 @@ async function retryStuckRealTrades() {
   });
 
   for (const trade of stuck) {
-    if (!isRealBinanceTrade(trade) || !trade.signal) continue;
+    if (!isRealExchangeTrade(trade) || !trade.signal) continue;
     const fallbackExit = trade.signal.status === SignalStatus.TP_HIT ? trade.signal.takeProfit : trade.signal.stopLoss;
-    await closeRealBinanceTrade(trade, trade.brokerAccount!, fallbackExit, trade.signal.resultPnlPct ?? 0);
+    await closeRealExchangeTrade(trade, trade.brokerAccount!, fallbackExit, trade.signal.resultPnlPct ?? 0);
   }
 }
 
-function isRealBinanceTrade(trade: { executionMode: string; brokerAccount: { exchange: string; isConnected: boolean } | null }): boolean {
+function isRealExchangeTrade(trade: { executionMode: string; brokerAccount: { exchange: string; isConnected: boolean } | null }): boolean {
   return (
     trade.executionMode !== "SIMULATED" &&
     !!trade.brokerAccount &&
-    trade.brokerAccount.exchange === "Binance" &&
-    trade.brokerAccount.isConnected
+    trade.brokerAccount.isConnected &&
+    isRealExchangeIntegrated(trade.brokerAccount.exchange)
   );
+}
+
+/** Hisob kalitlarini (va mavjud bo'lsa, passphrase'ni) deshifrlaydi - faqat haqiqiy birja so'rovlari uchun ishlatiladi */
+function decryptCredentials(account: { apiKeyEncrypted: string; apiSecretEncrypted: string; passphraseEncrypted?: string | null }): ExchangeCredentials {
+  return {
+    apiKey: decryptSecret(account.apiKeyEncrypted),
+    apiSecret: decryptSecret(account.apiSecretEncrypted),
+    passphrase: account.passphraseEncrypted ? decryptSecret(account.passphraseEncrypted) : undefined,
+  };
 }
 
 async function closeSimulatedTrade(
@@ -270,21 +279,25 @@ async function closeSimulatedTrade(
 }
 
 /**
- * Binance'da ochilgan HAQIQIY pozitsiyani yopadi: avval sotib olingan
+ * Ulangan birjada ochilgan HAQIQIY pozitsiyani yopadi: avval sotib olingan
  * miqdorni real bozor SELL buyurtmasi orqali sotadi, haqiqiy bajarilish
  * narxidan PnL hisoblaydi va hisob balansini birjadan qayta sinxronlaydi.
  */
-async function closeRealBinanceTrade(
+async function closeRealExchangeTrade(
   trade: { id: string; userId: string; symbol: string; direction: string; entryPrice: number; quantity: number; brokerAccountId: string | null },
-  account: { id: string; apiKeyEncrypted: string; apiSecretEncrypted: string },
+  account: { id: string; exchange: string; apiKeyEncrypted: string; apiSecretEncrypted: string; passphraseEncrypted: string | null },
   fallbackExitPrice: number,
   fallbackResultPnlPct: number
 ) {
-  let apiKey: string;
-  let apiSecret: string;
+  const adapter = getExchangeAdapter(account.exchange);
+  if (!adapter) {
+    await closeSimulatedTrade(trade, fallbackExitPrice, fallbackResultPnlPct);
+    return;
+  }
+
+  let creds: ExchangeCredentials;
   try {
-    apiKey = decryptSecret(account.apiKeyEncrypted);
-    apiSecret = decryptSecret(account.apiSecretEncrypted);
+    creds = decryptCredentials(account);
   } catch (err) {
     console.error(`[AI Engine] Hisob ${account.id} kalitlarini ochib bo'lmadi, simulyatsiyaga o'tilmoqda:`, err instanceof Error ? err.message : err);
     await closeSimulatedTrade(trade, fallbackExitPrice, fallbackResultPnlPct);
@@ -292,44 +305,37 @@ async function closeRealBinanceTrade(
   }
 
   try {
-    const order = await placeMarketOrder({
-      apiKey,
-      apiSecret,
-      symbol: trade.symbol,
-      side: "SELL",
-      quantity: trade.quantity,
-    });
-
-    const exitPrice = averageFillPrice(order.fills) ?? fallbackExitPrice;
+    const order = await adapter.placeMarketSell(creds, trade.symbol, trade.quantity);
+    const exitPrice = order.avgPrice ?? fallbackExitPrice;
     const pnlUsd = Number(((exitPrice - trade.entryPrice) * trade.quantity).toFixed(2));
 
     await prisma.trade.update({
       where: { id: trade.id },
-      data: { status: "CLOSED", exitPrice, pnlUsd, closedAt: new Date(), externalOrderId: String(order.orderId) },
+      data: { status: "CLOSED", exitPrice, pnlUsd, closedAt: new Date(), externalOrderId: order.orderId },
     });
 
-    await syncBinanceAccountBalance(account.id, apiKey, apiSecret);
+    await syncExchangeAccountBalance(adapter, account.id, creds);
 
-    const modeLabel = exchangeMode() === "live" ? "REAL" : "TESTNET (sinov)";
+    const modeLabel = exchangeMode() === "live" ? "REAL" : "TESTNET/sinov";
     await prisma.notification.create({
       data: {
         userId: trade.userId,
         title: pnlUsd >= 0 ? "Haqiqiy savdo foyda bilan yopildi" : "Haqiqiy savdo zarar bilan yopildi",
-        message: `${trade.symbol} ${trade.direction} (${modeLabel}, Binance) savdosi yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$`,
+        message: `${trade.symbol} ${trade.direction} (${modeLabel}, ${adapter.id}) savdosi yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$`,
       },
     });
   } catch (err) {
     // Yopib bo'lmadi (masalan, tarmoq yoki birja xatosi) - keyingi siklda
     // retryStuckRealTrades orqali qayta urinib ko'riladi, hozircha holatini
     // o'zgartirmaymiz (mablag'ni "yo'qotib qo'ymaslik" uchun muhim)
-    console.error(`[AI Engine] Binance yopish buyurtmasi xato (trade ${trade.id}):`, err instanceof Error ? err.message : err);
+    console.error(`[AI Engine] ${adapter.id} yopish buyurtmasi xato (trade ${trade.id}):`, err instanceof Error ? err.message : err);
   }
 }
 
-/** Hisob balansini Binance'dagi haqiqiy USDT balansi bilan qayta sinxronlaydi */
-async function syncBinanceAccountBalance(accountId: string, apiKey: string, apiSecret: string) {
+/** Hisob balansini ulangan birjadagi haqiqiy USDT balansi bilan qayta sinxronlaydi */
+async function syncExchangeAccountBalance(adapter: ExchangeAdapter, accountId: string, creds: ExchangeCredentials) {
   try {
-    const usdtBalance = await fetchUsdtBalance(apiKey, apiSecret);
+    const usdtBalance = await adapter.fetchQuoteBalance(creds);
     await prisma.brokerAccount.update({ where: { id: accountId }, data: { balanceUsd: usdtBalance } });
   } catch (err) {
     console.error(`[AI Engine] Hisob ${accountId} balansini sinxronlashda xato:`, err instanceof Error ? err.message : err);
@@ -362,8 +368,8 @@ export async function autoExecuteSignal(signal: { id: string; symbol: string; di
     const riskFraction = riskFractionByLevel[account.riskLevel] ?? 0.05;
     const positionUsd = Math.max(account.balanceUsd * riskFraction, 10);
 
-    if (account.exchange === "Binance") {
-      await openRealBinanceTrade(account, signal, positionUsd);
+    if (isRealExchangeIntegrated(account.exchange) && account.isConnected) {
+      await openRealExchangeTrade(account, signal, positionUsd);
     } else {
       await openSimulatedTrade(account, signal, positionUsd);
     }
@@ -403,16 +409,23 @@ async function openSimulatedTrade(
 }
 
 /**
- * Binance hisobida HAQIQIY bozor buyurtmasini joylashtiradi (testnet yoki
- * live - EXCHANGE_MODE'ga qarab). Spot hisoblarda shortlash imkonsiz bo'lgani
- * uchun faqat BUY yo'nalishidagi signallar bajariladi; SELL signallari xavfsiz
- * tarzda o'tkazib yuboriladi (faqat signal sifatida saqlanadi).
+ * Ulangan birjada (Binance/Bybit/OKX/KuCoin/BingX) HAQIQIY bozor buyurtmasini
+ * joylashtiradi (testnet yoki live - EXCHANGE_MODE'ga qarab). Spot hisoblarda
+ * shortlash imkonsiz bo'lgani uchun faqat BUY yo'nalishidagi signallar
+ * bajariladi; SELL signallari xavfsiz tarzda o'tkazib yuboriladi (faqat
+ * signal sifatida saqlanadi).
  */
-async function openRealBinanceTrade(
-  account: { id: string; userId: string; apiKeyEncrypted: string; apiSecretEncrypted: string },
+async function openRealExchangeTrade(
+  account: { id: string; userId: string; balanceUsd: number; exchange: string; apiKeyEncrypted: string; apiSecretEncrypted: string; passphraseEncrypted: string | null },
   signal: { id: string; symbol: string; direction: SignalDirection; entryPrice: number; confidence: number },
   positionUsd: number
 ) {
+  const adapter = getExchangeAdapter(account.exchange);
+  if (!adapter) {
+    await openSimulatedTrade(account, signal, positionUsd);
+    return;
+  }
+
   if (signal.direction !== SignalDirection.BUY) {
     await prisma.notification.create({
       data: {
@@ -424,11 +437,9 @@ async function openRealBinanceTrade(
     return;
   }
 
-  let apiKey: string;
-  let apiSecret: string;
+  let creds: ExchangeCredentials;
   try {
-    apiKey = decryptSecret(account.apiKeyEncrypted);
-    apiSecret = decryptSecret(account.apiSecretEncrypted);
+    creds = decryptCredentials(account);
   } catch (err) {
     console.error(`[AI Engine] Hisob ${account.id} kalitlarini ochib bo'lmadi:`, err instanceof Error ? err.message : err);
     return;
@@ -437,18 +448,12 @@ async function openRealBinanceTrade(
   const modeLabel = exchangeMode() === "live" ? "REAL" : "TESTNET (sinov)";
 
   try {
-    const order = await placeMarketOrder({
-      apiKey,
-      apiSecret,
-      symbol: signal.symbol,
-      side: "BUY",
-      quoteOrderQty: positionUsd,
-    });
+    const order = await adapter.placeMarketBuy(creds, signal.symbol, positionUsd);
 
-    const fillPrice = averageFillPrice(order.fills) ?? signal.entryPrice;
-    const executedQty = Number(order.executedQty);
+    const fillPrice = order.avgPrice ?? signal.entryPrice;
+    const executedQty = order.executedQty;
     if (!Number.isFinite(executedQty) || executedQty <= 0) {
-      throw new Error("Binance buyurtma bajarilgan miqdorni qaytarmadi");
+      throw new Error(`${adapter.id} buyurtma bajarilgan miqdorni qaytarmadi`);
     }
 
     await prisma.trade.create({
@@ -463,21 +468,21 @@ async function openRealBinanceTrade(
         executedByAi: true,
         status: "OPEN",
         executionMode: exchangeMode() === "live" ? "LIVE" : "TESTNET",
-        externalOrderId: String(order.orderId),
+        externalOrderId: order.orderId,
       },
     });
 
-    await syncBinanceAccountBalance(account.id, apiKey, apiSecret);
+    await syncExchangeAccountBalance(adapter, account.id, creds);
 
     await prisma.notification.create({
       data: {
         userId: account.userId,
         title: "AI haqiqiy buyurtma joylashtirdi",
-        message: `${signal.symbol} bo'yicha ${modeLabel} bozor buyurtmasi bajarildi: ${executedQty} dona, ~$${fillPrice} narxda (ishonch: ${signal.confidence}%).`,
+        message: `${signal.symbol} bo'yicha ${modeLabel} (${adapter.id}) bozor buyurtmasi bajarildi: ${executedQty} dona, ~$${fillPrice} narxda (ishonch: ${signal.confidence}%).`,
       },
     });
   } catch (err) {
-    console.error(`[AI Engine] Binance ochish buyurtmasi xato (account ${account.id}):`, err instanceof Error ? err.message : err);
+    console.error(`[AI Engine] ${adapter.id} ochish buyurtmasi xato (account ${account.id}):`, err instanceof Error ? err.message : err);
     await prisma.notification.create({
       data: {
         userId: account.userId,

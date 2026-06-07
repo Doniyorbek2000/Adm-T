@@ -5,7 +5,8 @@ import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { encryptSecret, maskSecret } from "../utils/crypto";
 import { PLAN_LIMITS } from "../services/planLimits";
-import { BinanceApiError, exchangeMode, fetchUsdtBalance } from "../services/exchanges/binance";
+import { ExchangeApiError, getExchangeAdapter } from "../services/exchanges/registry";
+import { exchangeMode } from "../services/exchanges/binance";
 
 /**
  * Hisob ulash logikasi:
@@ -23,6 +24,7 @@ const connectSchema = z.object({
   label: z.string().optional(),
   apiKey: z.string().min(4), // MT5 uchun: hisob login raqami
   apiSecret: z.string().min(4), // MT5 uchun: hisob paroli
+  passphrase: z.string().min(1).optional(), // faqat OKX/KuCoin uchun: API passphrase (maxfiy ibora)
   server: z.string().min(2).optional(), // faqat MT5 uchun: broker server nomi
   mode: z.enum(["SIGNAL_ONLY", "AUTO_TRADE"]).default("SIGNAL_ONLY"),
   riskLevel: z.number().int().min(1).max(3).default(2),
@@ -77,34 +79,40 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
     );
   }
 
-  // Binance uchun API kalit/maxfiy so'zni HAQIQIY birjada tekshiramiz va
-  // boshlang'ich balansni birjadan olamiz - bu (1) noto'g'ri/yaroqsiz
-  // kalitlarni darhol aniqlaydi (xavfsizlik), (2) foydalanuvchiga soxta emas,
-  // balki haqiqiy balansni ko'rsatadi.
-  let initialBalance = 1000; // boshqa (hali integratsiya qilinmagan) birjalar uchun virtual boshlang'ich balans
+  // Real integratsiya qilingan birjalar (Binance/Bybit/OKX/KuCoin/BingX) uchun
+  // API kalitlarini HAQIQIY birjada tekshiramiz va boshlang'ich balansni
+  // birjadan olamiz - bu (1) noto'g'ri/yaroqsiz kalitlarni darhol aniqlaydi
+  // (xavfsizlik), (2) foydalanuvchiga soxta emas, balki haqiqiy balansni
+  // ko'rsatadi. Hali integratsiya qilinmagan birjalar (MT5, boshqalar) uchun
+  // virtual boshlang'ich balans bilan davom etiladi.
+  const adapter = getExchangeAdapter(data.exchange);
+  let initialBalance = 1000;
   let connectionNotice = "";
-  if (data.exchange === "Binance") {
+
+  if (adapter) {
+    if (adapter.requiresPassphrase && !data.passphrase) {
+      throw new AppError(`${adapter.id} hisobini ulash uchun API passphrase (maxfiy ibora) ham kiritilishi shart.`, 400);
+    }
+
     try {
-      initialBalance = await fetchUsdtBalance(data.apiKey, data.apiSecret);
+      initialBalance = await adapter.fetchQuoteBalance({ apiKey: data.apiKey, apiSecret: data.apiSecret, passphrase: data.passphrase });
       connectionNotice =
         exchangeMode() === "live"
-          ? " Hisobingiz Binance'ning HAQIQIY (live) muhitiga ulandi - AI sizning real mablag'ingiz bilan ishlaydi."
-          : " Hisobingiz hozircha Binance TESTNET (sinov) muhitiga ulangan - AI sun'iy test mablag'i bilan ishlaydi, real pulingizga hech qanday ta'sir qilmaydi.";
+          ? ` Hisobingiz ${adapter.id}'ning HAQIQIY (live) muhitiga ulandi - AI sizning real mablag'ingiz bilan ishlaydi.`
+          : ` Hisobingiz hozircha ${adapter.id} TESTNET/sinov muhitiga ulangan - AI sun'iy test mablag'i bilan ishlaydi, real pulingizga hech qanday ta'sir qilmaydi.`;
     } catch (err) {
-      if (err instanceof BinanceApiError && err.code !== undefined) {
-        // Binance o'zi aniq xato kodi bilan rad etdi (masalan, -2014/-2015 -
-        // noto'g'ri kalit yoki ruxsat) - bu haqiqatan ham kalit muammosi
+      if (err instanceof ExchangeApiError && err.providerCode !== undefined) {
+        // Birja o'zi aniq xato kodi bilan rad etdi - bu haqiqatan ham kalit/ruxsat muammosi
         throw new AppError(
-          "Binance API kalit/maxfiy so'zini tasdiqlab bo'lmadi. Iltimos: (1) kalit va maxfiy so'z to'g'ri kiritilganini, (2) 'Enable Spot & Margin Trading' ruxsati yoqilganini, (3) IP cheklovlari to'g'ri sozlanganini tekshiring.",
+          `${adapter.id} API kalit ma'lumotlarini tasdiqlab bo'lmadi: ${err.message}. Iltimos kalit, maxfiy so'z${adapter.requiresPassphrase ? ", passphrase" : ""} va savdo ruxsatlari (Spot Trading) to'g'ri sozlanganini tekshiring.`,
           400
         );
       }
-      // Binance'dan aniq xato kodisiz javob (masalan, tarmoq, hosting provayder
-      // yoki mintaqaviy bloklash) - bu kalitning o'zi emas, ulanish muammosi
-      // bo'lishi mumkin, shuning uchun foydalanuvchini chalkashtirmaslik uchun
-      // umumiyroq xabar beramiz
+      // Aniq xato kodisiz javob - tarmoq, hosting provayder yoki mintaqaviy
+      // bloklash bo'lishi mumkin, shuning uchun foydalanuvchini chalkashtirmaslik
+      // uchun umumiyroq xabar beramiz
       throw new AppError(
-        "Binance bilan bog'lanib bo'lmadi. Bu serveringiz joylashgan mintaqa/IP Binance tomonidan cheklangani yoki birja vaqtinchalik javob bermayotgani sababli bo'lishi mumkin. Internet aloqangizni va kalitlaringizni tekshirib, birozdan so'ng qayta urinib ko'ring.",
+        `${adapter.id} bilan bog'lanib bo'lmadi. Bu serveringiz joylashgan mintaqa/IP ${adapter.id} tomonidan cheklangani yoki birja vaqtinchalik javob bermayotgani sababli bo'lishi mumkin. Internet aloqangizni va kalitlaringizni tekshirib, birozdan so'ng qayta urinib ko'ring.`,
         502
       );
     }
@@ -117,6 +125,7 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
       label: data.label ?? data.exchange,
       apiKeyEncrypted: encryptSecret(data.apiKey),
       apiSecretEncrypted: encryptSecret(data.apiSecret),
+      passphraseEncrypted: data.passphrase ? encryptSecret(data.passphrase) : undefined,
       server: data.exchange === "MT5" ? data.server : undefined,
       mode: data.mode,
       riskLevel: data.riskLevel,
