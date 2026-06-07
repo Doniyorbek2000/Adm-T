@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest, ApiError } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface SupportMessageDto {
   id: string;
@@ -20,9 +22,8 @@ interface ConversationDto {
   unreadCount: number;
 }
 
-const PLAN_LABELS: Record<string, string> = { FREE: "Bepul", PRO: "Pro", ULTRA: "Ultra", VIP: "VIP" };
-
 export default function AdminSupportPage() {
+  const { t } = useTranslation();
   const { token } = useAuth();
   const [conversations, setConversations] = useState<ConversationDto[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -52,14 +53,14 @@ export default function AdminSupportPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Qo'llab-quvvatlash va xabarlar</h1>
-          <p className="mt-1 text-sm text-slate-400">Foydalanuvchilar bilan yozishing yoki ularga umumiy xabar yuboring.</p>
+          <h1 className="text-2xl font-bold">{t("admin.support.title")}</h1>
+          <p className="mt-1 text-sm text-slate-400">{t("admin.support.subtitle")}</p>
         </div>
         <button
           onClick={() => setBroadcastOpen(true)}
           className="self-start rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
         >
-          📣 Xabar yuborish
+          {t("admin.support.sendMessage")}
         </button>
       </div>
 
@@ -68,12 +69,12 @@ export default function AdminSupportPage() {
       <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
         <div className="overflow-hidden rounded-2xl border border-white/10">
           <div className="border-b border-white/10 bg-white/5 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Suhbatlar
+            {t("admin.support.conversations")}
           </div>
           <div className="max-h-[640px] divide-y divide-white/5 overflow-y-auto">
-            {loadingList && <p className="px-4 py-6 text-sm text-slate-400">Yuklanmoqda...</p>}
+            {loadingList && <p className="px-4 py-6 text-sm text-slate-400">{t("common.loading")}</p>}
             {!loadingList && conversations.length === 0 && (
-              <p className="px-4 py-6 text-sm text-slate-500">Hozircha murojaatlar yo'q.</p>
+              <p className="px-4 py-6 text-sm text-slate-500">{t("admin.support.noConversations")}</p>
             )}
             {conversations.map((c) => (
               <button
@@ -94,7 +95,7 @@ export default function AdminSupportPage() {
                 <p className="truncate text-xs text-slate-400">{c.email}</p>
                 {c.lastMessage && (
                   <p className="mt-1 truncate text-xs text-slate-500">
-                    {c.lastMessage.senderRole === "ADMIN" ? "Siz: " : ""}
+                    {c.lastMessage.senderRole === "ADMIN" ? `${t("dash.support.you")}: ` : ""}
                     {c.lastMessage.body}
                   </p>
                 )}
@@ -112,7 +113,7 @@ export default function AdminSupportPage() {
           />
         ) : (
           <div className="flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.02] p-10 text-sm text-slate-500">
-            Suhbatni tanlang
+            {t("admin.support.selectConversation")}
           </div>
         )}
       </div>
@@ -133,6 +134,7 @@ export default function AdminSupportPage() {
 }
 
 function ConversationPanel({ userId, token, onReplied }: { userId: string; token: string | null; onReplied: () => void }) {
+  const { t, locale } = useTranslation();
   const [user, setUser] = useState<{ fullName: string; email: string; plan: string } | null>(null);
   const [messages, setMessages] = useState<SupportMessageDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,7 +169,7 @@ function ConversationPanel({ userId, token, onReplied }: { userId: string; token
       load();
       onReplied();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Javobni yuborib bo'lmadi");
+      setError(err instanceof ApiError ? err.message : t("admin.support.replyError"));
     } finally {
       setSending(false);
     }
@@ -180,16 +182,16 @@ function ConversationPanel({ userId, token, onReplied }: { userId: string; token
           <>
             <p className="font-semibold">{user.fullName}</p>
             <p className="text-xs text-slate-400">
-              {user.email} • <span className="font-medium text-emerald-300">{PLAN_LABELS[user.plan] ?? user.plan}</span> tarif
+              {user.email} • <span className="font-medium text-emerald-300">{t(`plan.${user.plan}` as TranslationKey)}</span>
             </p>
           </>
         ) : (
-          <p className="text-sm text-slate-400">Yuklanmoqda...</p>
+          <p className="text-sm text-slate-400">{t("common.loading")}</p>
         )}
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto p-5">
-        {loading && <p className="text-sm text-slate-400">Yuklanmoqda...</p>}
+        {loading && <p className="text-sm text-slate-400">{t("common.loading")}</p>}
         {messages.map((m) => {
           const fromAdmin = m.senderRole === "ADMIN";
           return (
@@ -200,10 +202,10 @@ function ConversationPanel({ userId, token, onReplied }: { userId: string; token
                 }`}
               >
                 <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  {fromAdmin ? "Siz (admin)" : user?.fullName ?? "Foydalanuvchi"}
+                  {fromAdmin ? t("dash.support.admin") : user?.fullName ?? t("admin.trades.colUser")}
                 </p>
                 <p className="whitespace-pre-wrap leading-relaxed">{m.body}</p>
-                <p className="mt-1.5 text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleString("uz-UZ")}</p>
+                <p className="mt-1.5 text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleString(locale)}</p>
               </div>
             </div>
           );
@@ -223,7 +225,7 @@ function ConversationPanel({ userId, token, onReplied }: { userId: string; token
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Javobingizni yozing..."
+          placeholder={t("admin.support.replyPlaceholder")}
           className="flex-1 rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
         />
         <button
@@ -231,7 +233,7 @@ function ConversationPanel({ userId, token, onReplied }: { userId: string; token
           disabled={sending || !draft.trim()}
           className="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
         >
-          {sending ? "Yuborilmoqda..." : "Javob yuborish"}
+          {sending ? t("common.sending") : t("admin.support.reply")}
         </button>
       </form>
     </div>
@@ -249,6 +251,7 @@ function BroadcastModal({
   onClose: () => void;
   onSent: (msg: string) => void;
 }) {
+  const { t } = useTranslation();
   const [target, setTarget] = useState<"ALL" | string>("ALL");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -271,7 +274,7 @@ function BroadcastModal({
       });
       onSent(data.message);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Xabarni yuborib bo'lmadi");
+      setError(err instanceof ApiError ? err.message : t("admin.support.sendError"));
     } finally {
       setSending(false);
     }
@@ -283,18 +286,18 @@ function BroadcastModal({
         className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-950 p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-lg font-bold">Xabar yuborish</h2>
-        <p className="mt-1 text-sm text-slate-400">Barcha foydalanuvchilarga yoki bitta foydalanuvchiga bildirishnoma yuboring.</p>
+        <h2 className="text-lg font-bold">{t("admin.support.modalTitle")}</h2>
+        <p className="mt-1 text-sm text-slate-400">{t("admin.support.modalSubtitle")}</p>
 
         <div className="mt-5 space-y-4">
           <label className="block text-xs">
-            <span className="mb-1.5 block font-medium text-slate-400">Qabul qiluvchi</span>
+            <span className="mb-1.5 block font-medium text-slate-400">{t("admin.support.recipientLabel")}</span>
             <select
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-emerald-400"
             >
-              <option value="ALL">📢 Barcha foydalanuvchilar</option>
+              <option value="ALL">{t("admin.support.recipientAll")}</option>
               {conversations.map((c) => (
                 <option key={c.userId} value={c.userId}>
                   {c.fullName} ({c.email})
@@ -304,22 +307,22 @@ function BroadcastModal({
           </label>
 
           <label className="block text-xs">
-            <span className="mb-1.5 block font-medium text-slate-400">Sarlavha</span>
+            <span className="mb-1.5 block font-medium text-slate-400">{t("admin.support.titleLabel")}</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Masalan: Tizim yangilanishi"
+              placeholder={t("admin.support.titlePlaceholder")}
               className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-emerald-400"
             />
           </label>
 
           <label className="block text-xs">
-            <span className="mb-1.5 block font-medium text-slate-400">Xabar matni</span>
+            <span className="mb-1.5 block font-medium text-slate-400">{t("admin.support.bodyLabel")}</span>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={4}
-              placeholder="Xabaringiz matnini shu yerga yozing..."
+              placeholder={t("admin.support.bodyPlaceholder")}
               className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-emerald-400"
             />
           </label>
@@ -329,14 +332,14 @@ function BroadcastModal({
 
         <div className="mt-5 flex justify-end gap-3">
           <button onClick={onClose} className="rounded-lg border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5">
-            Bekor qilish
+            {t("common.cancel")}
           </button>
           <button
             onClick={send}
             disabled={sending || !title.trim() || !body.trim()}
             className="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
           >
-            {sending ? "Yuborilmoqda..." : "Yuborish"}
+            {sending ? t("common.sending") : t("common.send")}
           </button>
         </div>
       </div>

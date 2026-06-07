@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest, ApiError } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 interface SupportMessageDto {
   id: string;
@@ -13,6 +14,7 @@ interface SupportMessageDto {
 
 export default function SupportPage() {
   const { token } = useAuth();
+  const { t, locale } = useTranslation();
   const [messages, setMessages] = useState<SupportMessageDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export default function SupportPage() {
       setDraft("");
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Xabarni yuborib bo'lmadi");
+      setError(err instanceof ApiError ? err.message : t("dash.support.error"));
     } finally {
       setSending(false);
     }
@@ -60,21 +62,17 @@ export default function SupportPage() {
   return (
     <div className="flex h-[calc(100vh-9rem)] flex-col space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Yordam markazi</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Savollaringiz bormi? Administratorga to'g'ridan-to'g'ri yozing — imkon qadar tez javob beramiz.
-        </p>
+        <h1 className="text-2xl font-bold">{t("dash.support.title")}</h1>
+        <p className="mt-1 text-sm text-slate-400">{t("dash.support.subtitle")}</p>
       </div>
 
       {error && <p className="rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</p>}
 
       <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
         <div className="flex-1 space-y-3 overflow-y-auto p-5">
-          {loading && <p className="text-sm text-slate-400">Yuklanmoqda...</p>}
+          {loading && <p className="text-sm text-slate-400">{t("common.loading")}</p>}
           {!loading && messages.length === 0 && (
-            <p className="py-10 text-center text-sm text-slate-500">
-              Hali yozishmalar yo'q. Quyidan birinchi xabaringizni yuboring — admin tez orada javob beradi.
-            </p>
+            <p className="py-10 text-center text-sm text-slate-500">{t("dash.support.empty")}</p>
           )}
           {messages.map((m) => {
             const mine = m.senderRole === "USER";
@@ -86,10 +84,10 @@ export default function SupportPage() {
                   }`}
                 >
                   <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    {mine ? "Siz" : "Administrator"}
+                    {mine ? t("dash.support.you") : t("dash.support.admin")}
                   </p>
                   <p className="whitespace-pre-wrap leading-relaxed">{m.body}</p>
-                  <p className="mt-1.5 text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleString("uz-UZ")}</p>
+                  <p className="mt-1.5 text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleString(locale)}</p>
                 </div>
               </div>
             );
@@ -107,7 +105,7 @@ export default function SupportPage() {
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Xabaringizni shu yerga yozing..."
+            placeholder={t("dash.support.placeholder")}
             className="flex-1 rounded-lg border border-white/10 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-emerald-400"
           />
           <button
@@ -115,7 +113,7 @@ export default function SupportPage() {
             disabled={sending || !draft.trim()}
             className="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
           >
-            {sending ? "Yuborilmoqda..." : "Yuborish"}
+            {sending ? t("common.sending") : t("common.send")}
           </button>
         </form>
       </div>

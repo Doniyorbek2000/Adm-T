@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { z } from "zod";
-import { PlanType } from "../constants/enums";
+import { PaymentMethod, PlanType } from "../constants/enums";
 import { prisma } from "../utils/prisma";
 import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
@@ -16,7 +16,9 @@ import { PLAN_LIMITS } from "../services/planLimits";
 
 const subscribeSchema = z.object({
   plan: z.nativeEnum(PlanType),
-  method: z.enum(["card", "crypto", "payme", "click"]).default("card"),
+  method: z.nativeEnum(PaymentMethod).default(PaymentMethod.CLICK),
+  cardNumber: z.string().trim().min(4).max(32).optional(),
+  phoneNumber: z.string().trim().min(5).max(32).optional(),
 });
 
 export const subscribe = asyncHandler(async (req: AuthedRequest, res: Response) => {
