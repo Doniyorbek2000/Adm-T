@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Eslatma: SQLite Prisma enumlarni qo'llab-quvvatlamaydi, shuning uchun
+// "enum" maydonlar String sifatida saqlanadi va ruxsat etilgan qiymatlar
+// src/constants/enums.ts faylida markazlashtirilgan (Role, PlanType,
+// SignalDirection, SignalStatus, TradeMode, TradeStatus, PaymentStatus).
+
+model User {
+  id            String    @id @default(cuid())
+  fullName      String
+  email         String    @unique
+  passwordHash  String
+  role          String    @default("USER") // USER | ADMIN
+  plan          String    @default("FREE") // FREE | PRO | ULTRA | VIP
+  planExpiresAt DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  brokerAccounts BrokerAccount[]
+  trades         Trade[]
+  payments       Payment[]
+  notifications  Notification[]
+}
+
+// Foydalanuvchining birja/broker hisobini ulashi (API kalitlar saqlanadi - shifrlangan)
+model BrokerAccount {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exchange           String // masalan: Binance, Bybit, OKX, Demo
+  label              String   @default("Asosiy hisob")
+  apiKeyEncrypted    String
+  apiSecretEncrypted String
+  isConnected        Boolean  @default(true)
+  mode               String   @default("SIGNAL_ONLY") // SIGNAL_ONLY | AUTO_TRADE
+  riskLevel          Int      @default(2) // 1 - past, 2 - o'rta, 3 - yuqori
+  balanceUsd         Float    @default(0)
+  createdAt          DateTime @default(now())
+
+  trades Trade[]
+}
+
+// AI tomonidan yaratilgan savdo signali
+model Signal {
+  id           String    @id @default(cuid())
+  symbol       String
+  direction    String // BUY | SELL
+  entryPrice   Float
+  takeProfit   Float
+  stopLoss     Float
+  confidence   Int // AI ishonch darajasi 0-100
+  analysis     String // AI tahlil matni
+  minPlan      String    @default("FREE") // signalni ko'rish uchun minimal tarif: FREE | PRO | ULTRA | VIP
+  status       String    @default("ACTIVE") // ACTIVE | TP_HIT | SL_HIT | CLOSED
+  resultPnlPct Float? // yopilgandan keyingi natija (% da)
+  createdAt    DateTime  @default(now())
+  closedAt     DateTime?
+
+  trades Trade[]
+}
+
+// Foydalanuvchi yoki AI tomonidan amalga oshirilgan savdo
+model Trade {
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brokerAccountId String?
+  brokerAccount   BrokerAccount? @relation(fields: [brokerAccountId], references: [id], onDelete: SetNull)
+  signalId        String?
+  signal          Signal?        @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  symbol          String
+  direction       String // BUY | SELL
+  entryPrice      Float
+  exitPrice       Float?
+  quantity        Float
+  pnlUsd          Float?
+  status          String         @default("OPEN") // OPEN | CLOSED
+  executedByAi    Boolean        @default(true)
+  openedAt        DateTime       @default(now())
+  closedAt        DateTime?
+}
+
+// Tarif rejalari (Free, Pro, Ultra, VIP)
+model SubscriptionPlan {
+  id                String  @id @default(cuid())
+  type              String  @unique // FREE | PRO | ULTRA | VIP
+  name              String
+  priceMonthlyUsd   Float
+  description       String
+  featuresJson      String // JSON massiv ko'rinishida xususiyatlar ro'yxati
+  maxBrokerAccounts Int     @default(1)
+  autoTradeAllowed  Boolean @default(false)
+  signalDelayMin    Int     @default(60) // signalni ko'rish kechikishi (daqiqa), VIP=0
+  isActive          Boolean @default(true)
+}
+
+// To'lovlar / obuna tarixi
+model Payment {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan        String // FREE | PRO | ULTRA | VIP
+  amountUsd   Float
+  status      String   @default("PENDING") // PENDING | PAID | FAILED | CANCELED
+  method      String   @default("card") // card, crypto, ...
+  periodStart DateTime @default(now())
+  periodEnd   DateTime
+  createdAt   DateTime @default(now())
+}
+
+// Foydalanuvchiga tizim xabarnomalari (signal, to'lov, tizim yangilanishi va h.k.)
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
