@@ -49,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadMe(stored)
       .catch(() => {
         window.localStorage.removeItem(STORAGE_KEY);
+        document.cookie = "token=; path=/; max-age=0";
         setToken(null);
         setUser(null);
       })
@@ -57,6 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const persistSession = useCallback((newToken: string, newUser: SessionUser) => {
     window.localStorage.setItem(STORAGE_KEY, newToken);
+    document.cookie = `token=${newToken}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
     setToken(newToken);
     setUser(newUser);
   }, []);
@@ -87,6 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     window.localStorage.removeItem(STORAGE_KEY);
+    document.cookie = "token=; path=/; max-age=0";
     setToken(null);
     setUser(null);
     router.push("/");

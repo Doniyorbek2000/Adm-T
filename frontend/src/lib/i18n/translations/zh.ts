@@ -288,6 +288,7 @@ const zh: Record<TranslationKey, string> = {
   "payment.phoneNumber": "手机号码",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "请选择支付方式",
+  "payment.secureNotice": "您的银行卡信息通过 Click/Payme 安全处理。我们绝不存储您的银行卡信息。",
 
   // Notifications
   "dash.notifications.title": "通知",

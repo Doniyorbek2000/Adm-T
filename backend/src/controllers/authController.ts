@@ -7,9 +7,18 @@ import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 
 const registerSchema = z.object({
-  fullName: z.string().min(2, "Ism kamida 2 ta belgidan iborat bo'lishi kerak"),
-  email: z.string().email("Email noto'g'ri formatda"),
-  password: z.string().min(6, "Parol kamida 6 ta belgidan iborat bo'lishi kerak"),
+  fullName: z
+    .string()
+    .min(2, "Ism kamida 2 ta belgidan iborat bo'lishi kerak")
+    .max(100, "Ism juda uzun"),
+  email: z.string().email("Email noto'g'ri formatda").max(254),
+  password: z
+    .string()
+    .min(8, "Parol kamida 8 ta belgidan iborat bo'lishi kerak")
+    .max(128, "Parol juda uzun")
+    .regex(/[A-Z]/, "Parolda kamida 1 ta katta harf bo'lishi kerak")
+    .regex(/[a-z]/, "Parolda kamida 1 ta kichik harf bo'lishi kerak")
+    .regex(/[0-9]/, "Parolda kamida 1 ta raqam bo'lishi kerak"),
 });
 
 const loginSchema = z.object({
@@ -37,7 +46,7 @@ export const register = asyncHandler(async (req: AuthedRequest, res: Response) =
     throw new AppError("Bu email bilan foydalanuvchi allaqachon ro'yxatdan o'tgan", 409);
   }
 
-  const passwordHash = await bcrypt.hash(data.password, 10);
+  const passwordHash = await bcrypt.hash(data.password, 12);
   const user = await prisma.user.create({
     data: {
       fullName: data.fullName,

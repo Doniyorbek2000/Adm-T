@@ -27,6 +27,18 @@ export const env = {
   // (haqiqiy birja, REAL pul bilan ishlaydi). Productionga o'tishdan oldin
   // operatsion jamoa tomonidan ongli ravishda "live" ga o'rnatilishi shart.
   exchangeMode: (process.env.EXCHANGE_MODE === "live" ? "live" : "testnet") as "testnet" | "live",
+
+  // To'lov tizimi: "test" (simulyatsiya, darhol faollashadi),
+  // "click" (Click.uz), yoki "payme" (Payme.uz)
+  paymentMode: (process.env.PAYMENT_MODE ?? "test") as "test" | "click" | "payme",
+  clickMerchantId: process.env.CLICK_MERCHANT_ID ?? "",
+  clickServiceId: process.env.CLICK_SERVICE_ID ?? "",
+  clickSecretKey: process.env.CLICK_SECRET_KEY ?? "",
+  paymeMerchantId: process.env.PAYME_MERCHANT_ID ?? "",
+  paymeKey: process.env.PAYME_KEY ?? "",
+
+  // MetaApi (MT5 ko'prigi) — metaapi.cloud hisobidagi API kaliti
+  metaApiToken: process.env.METAAPI_TOKEN ?? "",
 };
 
 /**

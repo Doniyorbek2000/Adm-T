@@ -288,6 +288,7 @@ const ky: Record<TranslationKey, string> = {
   "payment.phoneNumber": "Телефон номери",
   "payment.phoneNumberPlaceholder": "+996 700 12 34 56",
   "payment.selectMethod": "Төлөм ыкмасын тандаңыз",
+  "payment.secureNotice": "Сиздин карта маалыматтарыңыз Click/Payme аркылуу коопсуз иштелет. Биз карта маалыматтарыңызды эч качан сактабайбыз.",
 
   // Notifications
   "dash.notifications.title": "Билдирүүлөр",

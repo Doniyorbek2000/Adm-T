@@ -288,6 +288,7 @@ const ru: Record<TranslationKey, string> = {
   "payment.phoneNumber": "Номер телефона",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "Выберите способ оплаты",
+  "payment.secureNotice": "Данные вашей карты обрабатываются безопасно через Click/Payme. Мы никогда не сохраняем данные вашей карты.",
 
   // Notifications
   "dash.notifications.title": "Уведомления",

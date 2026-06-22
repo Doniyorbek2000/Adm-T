@@ -2,6 +2,7 @@ import { averageFillPrice, fetchSpotPrice, fetchUsdtBalance, placeMarketOrder } 
 import { bingxAdapter } from "./bingx";
 import { bybitAdapter } from "./bybit";
 import { kucoinAdapter } from "./kucoin";
+import { metaapiAdapter } from "./metaapi";
 import { okxAdapter } from "./okx";
 import { ExchangeAdapter, ExchangeCredentials, OrderResult } from "./types";
 
@@ -23,15 +24,9 @@ const binanceAdapter: ExchangeAdapter = {
 };
 
 /**
- * Real (REST API orqali) integratsiya qilingan birjalar registri.
- *
- * MUHIM: MT5 bu yerda yo'q - chunki MetaTrader 5 boshqa birjalardan farqli
- * o'laroq ommaviy REST API'ga ega EMAS (u Windows-based terminal protokoli).
- * Haqiqiy MT5 integratsiyasi alohida "bridge" xizmati (masalan, MetaApi.cloud
- * kabi uchinchi tomon SaaS yoki maxsus Expert Advisor + WebSocket ko'prigi)
- * talab qiladi - bu alohida arxitektura qarori va qo'shimcha xarajat (obuna)
- * bilan bog'liq, shuning uchun hozircha signal-only/simulyatsiya rejimida
- * qoladi (qarang: aiEngine.ts izohlari).
+ * Barcha integratsiya qilingan birjalar registri:
+ * - Binance, Bybit, OKX, KuCoin, BingX — to'g'ridan-to'g'ri REST API
+ * - MT5 — MetaApi.cloud REST ko'prigi orqali (METAAPI_TOKEN env kerak)
  */
 const REGISTRY: Record<string, ExchangeAdapter> = {
   Binance: binanceAdapter,
@@ -39,6 +34,7 @@ const REGISTRY: Record<string, ExchangeAdapter> = {
   OKX: okxAdapter,
   KuCoin: kucoinAdapter,
   BingX: bingxAdapter,
+  MT5: metaapiAdapter,
 };
 
 export function getExchangeAdapter(exchange: string): ExchangeAdapter | null {

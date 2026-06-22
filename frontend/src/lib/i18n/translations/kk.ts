@@ -288,6 +288,7 @@ const kk: Record<TranslationKey, string> = {
   "payment.phoneNumber": "Телефон нөмірі",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "Төлем әдісін таңдаңыз",
+  "payment.secureNotice": "Сіздің карта деректеріңіз Click/Payme арқылы қауіпсіз өңделеді. Біз карта деректеріңізді ешқашан сақтамаймыз.",
 
   // Notifications
   "dash.notifications.title": "Хабарландырулар",

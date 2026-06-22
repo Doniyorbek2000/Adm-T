@@ -288,6 +288,7 @@ const ar: Record<TranslationKey, string> = {
   "payment.phoneNumber": "رقم الهاتف",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "اختر طريقة الدفع",
+  "payment.secureNotice": "تتم معالجة بيانات بطاقتك بشكل آمن عبر Click/Payme. لا نقوم أبداً بتخزين بيانات بطاقتك.",
 
   // Notifications
   "dash.notifications.title": "الإشعارات",

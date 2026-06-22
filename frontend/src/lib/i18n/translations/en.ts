@@ -291,6 +291,7 @@ const en = {
   "payment.phoneNumber": "Phone number",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "Select a payment method",
+  "payment.secureNotice": "Your card details are processed securely through Click/Payme. We never store your card information.",
 
   // Notifications
   "dash.notifications.title": "Notifications",

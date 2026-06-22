@@ -288,6 +288,7 @@ const fa: Record<TranslationKey, string> = {
   "payment.phoneNumber": "شماره تلفن",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "روش پرداخت را انتخاب کنید",
+  "payment.secureNotice": "اطلاعات کارت شما به صورت امن از طریق Click/Payme پردازش می‌شود. ما هرگز اطلاعات کارت شما را ذخیره نمی‌کنیم.",
 
   // Notifications
   "dash.notifications.title": "اعلان‌ها",

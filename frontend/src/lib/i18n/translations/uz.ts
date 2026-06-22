@@ -288,6 +288,7 @@ const uz: Record<TranslationKey, string> = {
   "payment.phoneNumber": "Telefon raqami",
   "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "To'lov usulini tanlang",
+  "payment.secureNotice": "Karta ma'lumotlaringiz Click/Payme orqali xavfsiz tarzda qayta ishlanadi. Biz hech qachon karta ma'lumotlaringizni saqlamaymiz.",
 
   // Notifications
   "dash.notifications.title": "Bildirishnomalar",

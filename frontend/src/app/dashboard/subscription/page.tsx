@@ -35,7 +35,6 @@ const PLAN_STYLES: Record<string, string> = {
 
 type PaymentMethodCode = "HUMO" | "UZCARD" | "VISA" | "MASTERCARD" | "CLICK";
 
-const CARD_METHODS: PaymentMethodCode[] = ["HUMO", "UZCARD", "VISA", "MASTERCARD"];
 const METHOD_ICONS: Record<PaymentMethodCode, string> = {
   HUMO: "🟢",
   UZCARD: "🔵",
@@ -52,32 +51,11 @@ function PaymentModal({
 }: {
   plan: PlanDto;
   onClose: () => void;
-  onSubmit: (method: PaymentMethodCode, details: { cardNumber?: string; phoneNumber?: string }) => void;
+  onSubmit: (method: PaymentMethodCode) => void;
   submitting: boolean;
 }) {
   const { t } = useTranslation();
   const [method, setMethod] = useState<PaymentMethodCode | null>(null);
-  const [cardNumber, setCardNumber] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvv, setCvv] = useState("");
-  const [cardHolder, setCardHolder] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-
-  function handleConfirm() {
-    if (!method) return;
-    if (method === "CLICK") {
-      onSubmit(method, { phoneNumber: phoneNumber.trim() || undefined });
-    } else {
-      onSubmit(method, { cardNumber: cardNumber.replace(/\s+/g, "") || undefined });
-    }
-  }
-
-  const isCard = method && CARD_METHODS.includes(method);
-  const canConfirm =
-    !!method &&
-    (method === "CLICK"
-      ? phoneNumber.trim().length >= 9
-      : cardNumber.replace(/\s+/g, "").length >= 12 && expiry.trim().length >= 4 && cvv.trim().length >= 3 && cardHolder.trim().length >= 2);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm" onClick={onClose}>
@@ -124,67 +102,13 @@ function PaymentModal({
           </div>
         </div>
 
-        {isCard && (
-          <div className="mt-5 space-y-3">
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">{t("payment.cardNumber")}</label>
-              <input
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                placeholder="0000 0000 0000 0000"
-                maxLength={23}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-emerald-400/50"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-slate-400">{t("payment.expiry")}</label>
-                <input
-                  value={expiry}
-                  onChange={(e) => setExpiry(e.target.value)}
-                  placeholder="MM/YY"
-                  maxLength={5}
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-emerald-400/50"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-slate-400">{t("payment.cvv")}</label>
-                <input
-                  value={cvv}
-                  onChange={(e) => setCvv(e.target.value)}
-                  placeholder="•••"
-                  maxLength={4}
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-emerald-400/50"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">{t("payment.cardHolder")}</label>
-              <input
-                value={cardHolder}
-                onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
-                placeholder={t("payment.cardHolderPlaceholder")}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm uppercase outline-none focus:border-emerald-400/50"
-              />
-            </div>
-          </div>
-        )}
-
-        {method === "CLICK" && (
-          <div className="mt-5">
-            <label className="mb-1 block text-xs text-slate-400">{t("payment.phoneNumber")}</label>
-            <input
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder={t("payment.phoneNumberPlaceholder")}
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-emerald-400/50"
-            />
-          </div>
-        )}
+        <p className="mt-4 text-xs text-slate-500">
+          {t("payment.secureNotice")}
+        </p>
 
         <button
-          disabled={!canConfirm || submitting}
-          onClick={handleConfirm}
+          disabled={!method || submitting}
+          onClick={() => method && onSubmit(method)}
           className="mt-6 w-full rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-400"
         >
           {submitting ? t("dash.subscription.payProcessing") : t("dash.subscription.payConfirm")}
@@ -221,19 +145,30 @@ export default function SubscriptionPage() {
 
   useEffect(load, [token]);
 
-  async function handleSubscribe(method: PaymentMethodCode, details: { cardNumber?: string; phoneNumber?: string }) {
+  async function handleSubscribe(method: PaymentMethodCode) {
     if (!token || !modalPlan) return;
     setError(null);
     setMessage(null);
     setSubmitting(true);
     try {
-      const res = await apiRequest<{ message: string }>("/payments/subscribe", {
+      const res = await apiRequest<{
+        message: string;
+        paymentInfo?: { provider: string; checkoutUrl?: string; returnUrl?: string };
+      }>("/payments/subscribe", {
         method: "POST",
         token,
-        body: { plan: modalPlan.type, method, ...details },
+        body: { plan: modalPlan.type, method },
       });
+
+      // Agar backend to'lov provayderiga yo'naltirish ma'lumotini qaytarsa —
+      // foydalanuvchini provayder sahifasiga o'tkazamiz
+      if (res.paymentInfo?.checkoutUrl) {
+        window.location.href = res.paymentInfo.checkoutUrl;
+        return;
+      }
+
+      // Sinov rejimi yoki darhol tasdiqlangan to'lov
       setMessage(t("dash.subscription.paySuccess", { plan: modalPlan.name, method: t(`payment.method.${method}` as TranslationKey) }));
-      void res;
       setModalPlan(null);
       await refreshUser();
       load();
