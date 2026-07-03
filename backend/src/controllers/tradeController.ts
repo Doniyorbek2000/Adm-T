@@ -7,8 +7,11 @@ export const listMyTrades = asyncHandler(async (req: AuthedRequest, res: Respons
   const trades = await prisma.trade.findMany({
     where: { userId: req.user!.id },
     orderBy: { openedAt: "desc" },
-    take: 100,
-    include: { brokerAccount: { select: { exchange: true, label: true } }, signal: { select: { confidence: true, analysis: true } } },
+    take: 200,
+    include: {
+      brokerAccount: { select: { exchange: true, label: true } },
+      signal: { select: { confidence: true, analysis: true } },
+    },
   });
   res.json({ trades });
 });
