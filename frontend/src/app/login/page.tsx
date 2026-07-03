@@ -23,7 +23,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       const user = await login(email, password);
-      router.push(user.role === "ADMIN" ? "/admin" : "/dashboard");
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("auth.login.error"));
     } finally {

@@ -118,10 +118,10 @@ export default function DashboardOverviewPage() {
               {t("dash.overview.actionConnect")}
             </Link>
             <Link
-              href="/dashboard/subscription"
+              href="/dashboard/signals"
               className="block rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium hover:bg-white/10"
             >
-              {t("dash.overview.actionUpgrade")}
+              {t("dash.overview.viewAllSignals")}
             </Link>
             <Link
               href="/dashboard/trades"

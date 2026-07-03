@@ -19,7 +19,6 @@ const USER_NAV: NavItem[] = [
   { href: "/dashboard/signals", labelKey: "sidebar.signals", icon: "📡" },
   { href: "/dashboard/accounts", labelKey: "sidebar.accounts", icon: "🔗" },
   { href: "/dashboard/trades", labelKey: "sidebar.trades", icon: "📈" },
-  { href: "/dashboard/subscription", labelKey: "sidebar.subscription", icon: "💳" },
   { href: "/dashboard/notifications", labelKey: "sidebar.notifications", icon: "🔔" },
   { href: "/dashboard/support", labelKey: "sidebar.support", icon: "💬" },
 ];
@@ -49,17 +48,10 @@ export function DashboardShell({
     if (isLoading) return;
     if (!user) {
       router.replace("/login");
-      return;
     }
-    if (variant === "admin" && user.role !== "ADMIN") {
-      router.replace("/dashboard");
-    }
-    if (variant === "user" && user.role === "ADMIN") {
-      router.replace("/admin");
-    }
-  }, [isLoading, user, variant, router]);
+  }, [isLoading, user, router]);
 
-  const navItems = variant === "admin" ? ADMIN_NAV : USER_NAV;
+  const navItems = USER_NAV;
 
   if (isLoading || !user) {
     return (

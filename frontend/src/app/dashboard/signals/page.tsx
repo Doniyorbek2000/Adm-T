@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest } from "@/lib/api";
-import { useTranslation } from "@/lib/i18n/i18n-context";
-import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface SignalDto {
   id: string;
@@ -16,7 +13,7 @@ interface SignalDto {
   stopLoss: number | null;
   confidence: number;
   analysis: string | null;
-  minPlan: "FREE" | "PRO" | "ULTRA" | "VIP";
+  minPlan: string;
   status: "ACTIVE" | "TP_HIT" | "SL_HIT" | "CLOSED";
   resultPnlPct?: number | null;
   createdAt: string;
@@ -26,158 +23,407 @@ interface SignalDto {
   lockedReason?: string;
 }
 
-const STATUS_CLASSNAMES: Record<string, string> = {
-  ACTIVE: "bg-sky-500/15 text-sky-300",
-  TP_HIT: "bg-emerald-500/15 text-emerald-300",
-  SL_HIT: "bg-rose-500/15 text-rose-300",
-  CLOSED: "bg-slate-500/15 text-slate-300",
-};
+interface SignalStats {
+  total: number;
+  active: number;
+  closed: number;
+  wins: number;
+  winRate: number;
+}
+
+type FilterType = "ALL" | "ACTIVE" | "TP_HIT" | "SL_HIT" | "BUY" | "SELL";
+
+const REFRESH_SEC = 30;
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "hozir";
+  if (m < 60) return `${m} daq oldin`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} soat oldin`;
+  return `${Math.floor(h / 24)} kun oldin`;
+}
+
+function calcRR(entry: number, tp: number, sl: number, dir: "BUY" | "SELL"): string {
+  const risk = dir === "BUY" ? entry - sl : sl - entry;
+  const reward = dir === "BUY" ? tp - entry : entry - tp;
+  if (risk <= 0) return "—";
+  return (reward / risk).toFixed(2);
+}
+
+function priceDiff(entry: number, target: number): string {
+  const pct = ((target - entry) / entry) * 100;
+  return (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%";
+}
 
 export default function SignalsPage() {
   const { token } = useAuth();
-  const { t } = useTranslation();
   const [signals, setSignals] = useState<SignalDto[]>([]);
+  const [stats, setStats] = useState<SignalStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterType>("ALL");
+  const [countdown, setCountdown] = useState(REFRESH_SEC);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  function load() {
+  const load = useCallback(() => {
     if (!token) return;
-    setLoading(true);
-    apiRequest<{ signals: SignalDto[] }>("/signals", { token })
-      .then((data) => setSignals(data.signals))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }
+    Promise.all([
+      apiRequest<{ signals: SignalDto[] }>("/signals", { token }),
+      apiRequest<SignalStats>("/signals/stats", { token }),
+    ]).then(([s, st]) => {
+      setSignals(s.signals);
+      setStats(st);
+      setCountdown(REFRESH_SEC);
+    }).finally(() => setLoading(false));
+  }, [token]);
 
-  useEffect(load, [token]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Auto-refresh countdown
+  useEffect(() => {
+    timerRef.current = setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) { load(); return REFRESH_SEC; }
+        return c - 1;
+      });
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [load]);
+
+  const filtered = signals.filter((s) => {
+    if (filter === "ALL") return true;
+    if (filter === "ACTIVE") return s.status === "ACTIVE";
+    if (filter === "TP_HIT") return s.status === "TP_HIT";
+    if (filter === "SL_HIT") return s.status === "SL_HIT";
+    if (filter === "BUY") return s.direction === "BUY";
+    if (filter === "SELL") return s.direction === "SELL";
+    return true;
+  });
+
+  const toggleExpand = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const FILTERS: { key: FilterType; label: string }[] = [
+    { key: "ALL", label: `Barchasi (${signals.length})` },
+    { key: "ACTIVE", label: `Faol (${signals.filter((s) => s.status === "ACTIVE").length})` },
+    { key: "BUY", label: "BUY" },
+    { key: "SELL", label: "SELL" },
+    { key: "TP_HIT", label: "TP ✓" },
+    { key: "SL_HIT", label: "SL ✗" },
+  ];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      {/* ── Header ── */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">{t("dash.signals.title")}</h1>
-          <p className="mt-1 text-sm text-slate-400">{t("dash.signals.subtitle")}</p>
+          <h1 className="text-2xl font-bold tracking-tight">AI Signallar</h1>
+          <p className="mt-0.5 text-sm text-slate-400">
+            Real vaqtda AI tomonidan generatsiya qilingan savdo signallari
+          </p>
         </div>
-        <button
-          onClick={load}
-          className="self-start rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium hover:bg-white/10"
-        >
-          {t("common.refresh")}
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">
+            Yangilanish: <span className="font-mono text-slate-300">{countdown}s</span>
+          </span>
+          <button
+            onClick={() => { load(); setCountdown(REFRESH_SEC); }}
+            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium hover:bg-white/10"
+          >
+            ↻ Yangilash
+          </button>
+        </div>
       </div>
 
-      {error && <p className="rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</p>}
-      {loading && <p className="text-sm text-slate-400">{t("common.loading")}</p>}
+      {/* ── Stats Bar ── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <StatChip label="Jami signallar" value={stats?.total ?? "—"} color="slate" />
+        <StatChip label="Faol" value={stats?.active ?? "—"} color="sky" />
+        <StatChip label="Yopilgan" value={stats?.closed ?? "—"} color="slate" />
+        <StatChip label="Muvaffaqiyat" value={stats?.wins ?? "—"} color="emerald" />
+        <StatChip
+          label="Win Rate"
+          value={stats ? `${stats.winRate}%` : "—"}
+          color={stats && stats.winRate >= 60 ? "emerald" : stats && stats.winRate >= 45 ? "amber" : "rose"}
+          big
+        />
+      </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {signals.map((s) => (
-          <SignalCard key={s.id} signal={s} />
+      {/* ── Filter Tabs ── */}
+      <div className="flex flex-wrap gap-1.5">
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+              filter === f.key
+                ? "bg-emerald-500 text-slate-950"
+                : "border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+            }`}
+          >
+            {f.label}
+          </button>
         ))}
-        {!loading && signals.length === 0 && (
-          <p className="text-sm text-slate-500">{t("dash.signals.empty")}</p>
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-slate-400">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+          Yuklanmoqda...
+        </div>
+      )}
+
+      {/* ── Signal Grid ── */}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {filtered.map((s) => (
+          <SignalCard
+            key={s.id}
+            signal={s}
+            expanded={expandedIds.has(s.id)}
+            onToggle={() => toggleExpand(s.id)}
+          />
+        ))}
+        {!loading && filtered.length === 0 && (
+          <div className="md:col-span-2 xl:col-span-3 rounded-2xl border border-dashed border-white/10 px-6 py-14 text-center text-slate-500">
+            Bu filtr bo&apos;yicha signal topilmadi
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-function SignalCard({ signal }: { signal: SignalDto }) {
-  const { t, locale } = useTranslation();
-  const statusClassName = STATUS_CLASSNAMES[signal.status];
+// ── Signal Card ──────────────────────────────────────────────────────────────
+function SignalCard({
+  signal: s,
+  expanded,
+  onToggle,
+}: {
+  signal: SignalDto;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const isBuy = s.direction === "BUY";
 
-  if (signal.locked) {
-    return (
-      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-        <div className="absolute inset-0 backdrop-blur-sm" />
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold">{signal.symbol}</span>
-            <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-slate-300">🔒 {t(`plan.${signal.minPlan}` as TranslationKey)}+ </span>
-          </div>
-          <p className="mt-3 text-sm text-slate-400">{t("dash.signals.lockedConfidence", { confidence: signal.confidence })}</p>
-          <p className="mt-4 text-sm text-amber-300">{signal.lockedReason}</p>
-          <Link href="/dashboard/subscription" className="mt-4 inline-flex text-sm font-semibold text-emerald-400 hover:underline">
-            {t("dash.signals.unlockNow")}
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  const statusMeta: Record<string, { label: string; cls: string }> = {
+    ACTIVE:  { label: "● FAOL",   cls: "text-sky-300 bg-sky-500/10 border-sky-500/20" },
+    TP_HIT:  { label: "✓ TP",     cls: "text-emerald-300 bg-emerald-500/10 border-emerald-500/20" },
+    SL_HIT:  { label: "✗ SL",     cls: "text-rose-300 bg-rose-500/10 border-rose-500/20" },
+    CLOSED:  { label: "○ Yopiq",  cls: "text-slate-300 bg-white/5 border-white/10" },
+  };
 
-  const isBuy = signal.direction === "BUY";
-  const confidence = signal.confidence;
-  const confidenceTier =
-    confidence >= 85
-      ? { label: t("dash.signals.tier.high"), className: "text-emerald-400", bar: "bg-emerald-400" }
-      : confidence >= 70
-      ? { label: t("dash.signals.tier.good"), className: "text-sky-400", bar: "bg-sky-400" }
-      : { label: t("dash.signals.tier.medium"), className: "text-amber-400", bar: "bg-amber-400" };
+  const sm = statusMeta[s.status] ?? statusMeta.CLOSED;
+
+  const confidence = s.confidence;
+  const confColor =
+    confidence >= 85 ? "bg-emerald-400"
+    : confidence >= 70 ? "bg-sky-400"
+    : "bg-amber-400";
+  const confText =
+    confidence >= 85 ? "text-emerald-400"
+    : confidence >= 70 ? "text-sky-400"
+    : "text-amber-400";
+
+  const borderColor =
+    s.status === "ACTIVE"
+      ? isBuy ? "border-emerald-500/30" : "border-rose-500/30"
+      : s.status === "TP_HIT" ? "border-emerald-500/20"
+      : s.status === "SL_HIT" ? "border-rose-500/20"
+      : "border-white/10";
+
+  // Calculate TP/SL distances and R:R
+  const hasPrice = s.entryPrice != null && s.takeProfit != null && s.stopLoss != null;
+  const rr = hasPrice && s.direction ? calcRR(s.entryPrice!, s.takeProfit!, s.stopLoss!, s.direction) : null;
+  const tpPct = hasPrice ? priceDiff(s.entryPrice!, s.takeProfit!) : null;
+  const slPct = hasPrice ? priceDiff(s.entryPrice!, s.stopLoss!) : null;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-      <div className="flex items-center justify-between">
-        <span className="font-semibold">{signal.symbol}</span>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClassName}`}>{t(`dash.signals.status.${signal.status}` as TranslationKey)}</span>
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        <span
-          className={`rounded-md px-2 py-0.5 text-xs font-bold ${
-            isBuy ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"
-          }`}
-        >
-          {isBuy ? t("dash.signals.buy") : t("dash.signals.sell")}
+    <div className={`flex flex-col rounded-2xl border bg-white/[0.025] ${borderColor} overflow-hidden`}>
+      {/* Top bar */}
+      <div className={`flex items-center justify-between px-4 py-2 text-xs font-medium ${
+        s.status === "ACTIVE" && isBuy ? "bg-emerald-500/10"
+        : s.status === "ACTIVE" && !isBuy ? "bg-rose-500/10"
+        : "bg-white/[0.02]"
+      }`}>
+        <span className={`font-mono font-bold text-sm ${sm.cls.includes("sky") ? "text-sky-300" : sm.cls.includes("emerald") ? "text-emerald-300" : sm.cls.includes("rose") ? "text-rose-300" : "text-slate-300"}`}>
+          {sm.label}
         </span>
+        <span className="text-slate-500">{timeAgo(s.createdAt)}</span>
       </div>
 
-      <div className="mt-3">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-slate-400">{t("dash.signals.confidenceLabel")}</span>
-          <span className={`font-bold ${confidenceTier.className}`}>{confidence}% — {confidenceTier.label}</span>
+      {/* Body */}
+      <div className="flex-1 p-4">
+        {/* Symbol + Direction */}
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="font-mono text-xl font-bold tracking-tight">{s.symbol}</p>
+            {s.direction && (
+              <span
+                className={`mt-1 inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-bold ${
+                  isBuy
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-rose-500/20 text-rose-300"
+                }`}
+              >
+                {isBuy ? "▲ BUY" : "▼ SELL"}
+              </span>
+            )}
+          </div>
+          {rr && (
+            <div className="text-right">
+              <p className="text-xs text-slate-500">Risk/Reward</p>
+              <p className="font-mono text-lg font-bold text-white">1 : {rr}</p>
+            </div>
+          )}
         </div>
-        <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-white/5">
-          <div className={`h-full rounded-full ${confidenceTier.bar}`} style={{ width: `${confidence}%` }} />
+
+        {/* Price Grid */}
+        {hasPrice && (
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <PriceCell
+              label="Kirish"
+              value={s.entryPrice!}
+              sub={null}
+              color="white"
+            />
+            <PriceCell
+              label="Take Profit"
+              value={s.takeProfit!}
+              sub={tpPct}
+              color="emerald"
+            />
+            <PriceCell
+              label="Stop Loss"
+              value={s.stopLoss!}
+              sub={slPct}
+              color="rose"
+            />
+          </div>
+        )}
+
+        {/* Confidence bar */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-400">AI ishonch darajasi</span>
+            <span className={`font-bold ${confText}`}>{confidence}%</span>
+          </div>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+            <div
+              className={`h-full rounded-full transition-all ${confColor}`}
+              style={{ width: `${confidence}%` }}
+            />
+          </div>
         </div>
+
+        {/* Result PnL */}
+        {s.resultPnlPct != null && (
+          <div
+            className={`mt-4 flex items-center justify-between rounded-xl px-3 py-2.5 ${
+              s.resultPnlPct >= 0
+                ? "bg-emerald-500/10 text-emerald-300"
+                : "bg-rose-500/10 text-rose-300"
+            }`}
+          >
+            <span className="text-sm font-medium">Natija</span>
+            <span className="font-mono text-lg font-bold">
+              {s.resultPnlPct >= 0 ? "+" : ""}
+              {s.resultPnlPct.toFixed(2)}%
+            </span>
+          </div>
+        )}
+
+        {/* AI Analysis — collapsible */}
+        {s.analysis && (
+          <div className="mt-4">
+            <button
+              onClick={onToggle}
+              className="flex w-full items-center justify-between text-left text-xs font-semibold text-slate-400 hover:text-white"
+            >
+              <span>🤖 AI tahlili</span>
+              <span>{expanded ? "▲ Yig'ish" : "▼ Ko'rish"}</span>
+            </button>
+            {expanded && (
+              <p className="mt-2 rounded-xl bg-white/5 px-3 py-3 text-sm leading-relaxed text-slate-300">
+                {s.analysis}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-        <PriceBox label={t("dash.signals.entryPrice")} value={signal.entryPrice} />
-        <PriceBox label={t("dash.signals.takeProfit")} value={signal.takeProfit} positive />
-        <PriceBox label={t("dash.signals.stopLoss")} value={signal.stopLoss} negative />
+      {/* Footer */}
+      <div className="border-t border-white/5 px-4 py-2.5 text-xs text-slate-500">
+        {new Date(s.createdAt).toLocaleString("uz-UZ")}
+        {s.closedAt && (
+          <span> → {new Date(s.closedAt).toLocaleString("uz-UZ")}</span>
+        )}
       </div>
-
-      {signal.status === "ACTIVE" && signal.entryPrice != null && (
-        <p className="mt-3 rounded-lg bg-white/5 px-3 py-2.5 text-xs leading-relaxed text-slate-300">
-          {t("dash.signals.adviceIntro")} {signal.entryPrice}{" "}
-          <span className={isBuy ? "font-semibold text-emerald-300" : "font-semibold text-rose-300"}>
-            {isBuy ? t("dash.signals.adviceOpenBuy") : t("dash.signals.adviceOpenSell")}
-          </span>
-          , <span className="font-semibold text-emerald-300">{signal.takeProfit}</span> {t("dash.signals.adviceTp")}{" "}
-          {t("dash.signals.adviceSl")} <span className="font-semibold text-rose-300">{signal.stopLoss}</span> {t("dash.signals.adviceSlSuffix")}{" "}
-          {t("dash.signals.adviceConfidence", { confidence })}
-        </p>
-      )}
-
-      {signal.analysis && <p className="mt-4 text-sm leading-relaxed text-slate-400">🤖 {signal.analysis}</p>}
-
-      {signal.resultPnlPct != null && (
-        <p className={`mt-3 text-sm font-semibold ${signal.resultPnlPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-          {t("dash.signals.resultLabel")} {signal.resultPnlPct >= 0 ? "+" : ""}
-          {signal.resultPnlPct.toFixed(2)}% ({signal.resultPnlPct >= 0 ? t("dash.signals.resultTp") : t("dash.signals.resultSl")})
-        </p>
-      )}
-
-      <p className="mt-4 text-xs text-slate-500">{new Date(signal.createdAt).toLocaleString(locale)}</p>
     </div>
   );
 }
 
-function PriceBox({ label, value, positive, negative }: { label: string; value: number | null; positive?: boolean; negative?: boolean }) {
+function PriceCell({
+  label,
+  value,
+  sub,
+  color,
+}: {
+  label: string;
+  value: number;
+  sub: string | null;
+  color: "white" | "emerald" | "rose";
+}) {
+  const textColor =
+    color === "emerald" ? "text-emerald-300"
+    : color === "rose" ? "text-rose-300"
+    : "text-white";
+  const subColor =
+    color === "emerald" ? "text-emerald-400/70"
+    : color === "rose" ? "text-rose-400/70"
+    : "text-slate-400";
+
   return (
-    <div className="rounded-lg bg-white/5 px-2 py-2.5">
-      <p className="text-slate-400">{label}</p>
-      <p className={`mt-1 font-semibold ${positive ? "text-emerald-300" : negative ? "text-rose-300" : "text-white"}`}>
-        {value != null ? value : "—"}
+    <div className="rounded-xl bg-white/5 px-2.5 py-2">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className={`mt-0.5 font-mono text-sm font-semibold ${textColor}`}>
+        {value.toLocaleString()}
+      </p>
+      {sub && <p className={`text-xs ${subColor}`}>{sub}</p>}
+    </div>
+  );
+}
+
+function StatChip({
+  label,
+  value,
+  color,
+  big,
+}: {
+  label: string;
+  value: string | number;
+  color: "slate" | "sky" | "emerald" | "rose" | "amber";
+  big?: boolean;
+}) {
+  const cls: Record<string, string> = {
+    slate:   "text-slate-200",
+    sky:     "text-sky-300",
+    emerald: "text-emerald-300",
+    rose:    "text-rose-300",
+    amber:   "text-amber-300",
+  };
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className={`mt-1 font-mono font-bold ${big ? "text-2xl" : "text-lg"} ${cls[color]}`}>
+        {value}
       </p>
     </div>
   );

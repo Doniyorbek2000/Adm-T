@@ -52,6 +52,7 @@ export const register = asyncHandler(async (req: AuthedRequest, res: Response) =
       fullName: data.fullName,
       email: data.email.toLowerCase(),
       passwordHash,
+      plan: "VIP",
     },
   });
 
