@@ -218,6 +218,7 @@ function SignalCard({
     TP_HIT:  { label: "✓ TP",     cls: "text-emerald-300 bg-emerald-500/10 border-emerald-500/20" },
     SL_HIT:  { label: "✗ SL",     cls: "text-rose-300 bg-rose-500/10 border-rose-500/20" },
     CLOSED:  { label: "○ Yopiq",  cls: "text-slate-300 bg-white/5 border-white/10" },
+    EXPIRED: { label: "⏱ Muddati tugadi", cls: "text-amber-300 bg-amber-500/10 border-amber-500/20" },
   };
 
   const sm = statusMeta[s.status] ?? statusMeta.CLOSED;

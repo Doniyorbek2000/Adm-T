@@ -4,10 +4,12 @@ import {
   closeSignal,
   createManualSignal,
   dashboardStats,
+  getEngineStatus,
   listAllSignals,
   listAllTrades,
   listPlansAdmin,
   listUsers,
+  updateEngineStatus,
   updatePlan,
   updateUser,
 } from "../controllers/adminController";
@@ -23,6 +25,10 @@ const router = Router();
 router.use(requireAuth, requireAdmin);
 
 router.get("/stats", dashboardStats);
+
+// AI dvigatel kill-switch (favqulodda to'xtatish)
+router.get("/engine", getEngineStatus);
+router.patch("/engine", updateEngineStatus);
 
 router.get("/users", listUsers);
 router.patch("/users/:id", updateUser);

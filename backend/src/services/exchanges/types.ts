@@ -21,6 +21,15 @@ export interface OrderResult {
   executedQty: number;
   /** Buyurtmaning o'rtacha bajarilish narxi (agar birja qaytarmasa - null, signal narxi zaxira sifatida ishlatiladi) */
   avgPrice: number | null;
+  /** Komissiya ayirilgandan keyin real sotish mumkin bo'lgan miqdor (faqat BUY uchun ma'noli) */
+  sellableQty?: number;
+}
+
+/** Birja tomonidagi himoya (TP/SL) buyurtmalari holati */
+export interface ProtectiveOrderStatus {
+  status: "OPEN" | "FILLED" | "CANCELED";
+  exitPrice: number | null;
+  executedQty: number;
 }
 
 export interface ExchangeAdapter {
@@ -38,6 +47,23 @@ export interface ExchangeAdapter {
   placeMarketBuy(creds: ExchangeCredentials, symbol: string, quoteAmount: number): Promise<OrderResult>;
   /** Belgilangan miqdordagi aktivni sotish (bozor buyurtmasi) - pozitsiyani yopish uchun */
   placeMarketSell(creds: ExchangeCredentials, symbol: string, baseQuantity: number): Promise<OrderResult>;
+
+  /**
+   * Ixtiyoriy: pozitsiyani birja tomonida himoyalovchi OCO (TP limit + SL stop)
+   * buyurtmalarini joylashtirish. Qo'llab-quvvatlamaydigan birjalarda undefined —
+   * u holda TP/SL server tomonida (AI sikli) kuzatiladi.
+   */
+  placeProtectiveOrders?(
+    creds: ExchangeCredentials,
+    symbol: string,
+    quantity: number,
+    takeProfit: number,
+    stopLoss: number
+  ): Promise<{ listId: string; quantity: number }>;
+  /** Ixtiyoriy: himoya buyurtmalari holatini tekshirish */
+  fetchProtectiveStatus?(creds: ExchangeCredentials, symbol: string, listId: string): Promise<ProtectiveOrderStatus>;
+  /** Ixtiyoriy: himoya buyurtmalarini bekor qilish (qo'lda yopishdan oldin) */
+  cancelProtectiveOrders?(creds: ExchangeCredentials, symbol: string, listId: string): Promise<"canceled" | "already_done">;
 }
 
 export class ExchangeApiError extends Error {

@@ -62,7 +62,7 @@ model Signal {
   confidence   Int // AI ishonch darajasi 0-100
   analysis     String // AI tahlil matni
   minPlan      String    @default("FREE") // signalni ko'rish uchun minimal tarif: FREE | PRO | ULTRA | VIP
-  status       String    @default("ACTIVE") // ACTIVE | TP_HIT | SL_HIT | CLOSED
+  status       String    @default("ACTIVE") // ACTIVE | TP_HIT | SL_HIT | CLOSED | EXPIRED (48h ichida TP/SL'ga yetmagan)
   resultPnlPct Float? // yopilgandan keyingi natija (% da)
   createdAt    DateTime  @default(now())
   closedAt     DateTime?
@@ -89,6 +89,8 @@ model Trade {
   executedByAi    Boolean        @default(true)
   executionMode   String         @default("SIMULATED") // SIMULATED | TESTNET | LIVE - savdo qanday muhitda bajarilgani
   externalOrderId String? // ulangan birjadagi haqiqiy buyurtma ID (TESTNET/LIVE uchun, audit va solishtirish maqsadida)
+  ocoOrderListId  String? // birja tomonidagi himoya OCO (TP/SL) buyurtmalar ro'yxati ID — server o'chsa ham pozitsiya himoyalangan
+  feeUsd          Float? // savdo komissiyasi (USD) — PnL'dan alohida hisobga olinadi
   openedAt        DateTime       @default(now())
   closedAt        DateTime?
 }
@@ -114,6 +116,8 @@ model Payment {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan        String // FREE | PRO | ULTRA | VIP
   amountUsd   Float
+  amountUzs   Int? // to'lov yaratilgan paytdagi kurs bo'yicha qat'iy UZS summa — webhook shu summani tekshiradi
+  providerTransId String? // Click/Payme tomonidagi tranzaksiya ID (audit va takroriy so'rovlarni aniqlash uchun)
   status      String   @default("PENDING") // PENDING | PAID | FAILED | CANCELED
   method      String   @default("card") // card, crypto, ...
   periodStart DateTime @default(now())
@@ -131,6 +135,13 @@ model SupportMessage {
   body       String
   isRead     Boolean  @default(false)
   createdAt  DateTime @default(now())
+}
+
+// Platforma darajasidagi sozlamalar (masalan, AI dvigatelni to'xtatuvchi kill-switch)
+model PlatformSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 // Foydalanuvchiga tizim xabarnomalari (signal, to'lov, tizim yangilanishi va h.k.)

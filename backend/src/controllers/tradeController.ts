@@ -4,7 +4,7 @@ import { asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { fetchSpotPrice } from "../services/exchanges/binance";
 import { getExchangeAdapter } from "../services/exchanges/registry";
-import { decryptCredentials } from "../services/aiEngine";
+import { decryptCredentials, recordRealTradeClose } from "../services/aiEngine";
 
 export const listMyTrades = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const trades = await prisma.trade.findMany({
@@ -79,27 +79,40 @@ export const closeTrade = asyncHandler(async (req: AuthedRequest, res: Response)
         return res.status(500).json({ message: "API kalitlarini o'qib bo'lmadi" });
       }
 
+      // Birja tomonidagi OCO (TP/SL) himoyasi bo'lsa — market-sell'dan oldin
+      // uni bekor qilamiz; allaqachon bajarilgan bo'lsa, o'sha natijani yozamiz
+      if (trade.ocoOrderListId && adapter.cancelProtectiveOrders && adapter.fetchProtectiveStatus) {
+        try {
+          const cancelResult = await adapter.cancelProtectiveOrders(creds, trade.symbol, trade.ocoOrderListId);
+          if (cancelResult === "already_done") {
+            const status = await adapter.fetchProtectiveStatus(creds, trade.symbol, trade.ocoOrderListId);
+            if (status.status === "FILLED") {
+              const result = await recordRealTradeClose(
+                trade, trade.brokerAccount, adapter, creds,
+                status.exitPrice ?? exitPrice,
+                status.executedQty > 0 ? status.executedQty : trade.quantity,
+                null,
+                "birja tomonidagi TP/SL allaqachon bajarilgan edi"
+              );
+              return res.json({ success: true, exitPrice: result.exitPrice, pnlUsd: result.pnlUsd });
+            }
+          }
+        } catch (err) {
+          return res.status(502).json({
+            message: `Himoya buyurtmasini bekor qilib bo'lmadi: ${err instanceof Error ? err.message : "Noma'lum xato"}. Qayta urinib ko'ring.`,
+          });
+        }
+      }
+
       try {
         const order = await adapter.placeMarketSell(creds, trade.symbol, trade.quantity);
         const realExit = order.avgPrice ?? exitPrice;
-        const grossPnl = (realExit - trade.entryPrice) * trade.quantity;
-        const feeUsd = realExit * trade.quantity * 0.002;
-        const pnlUsd = Number((grossPnl - feeUsd).toFixed(2));
-
-        await prisma.trade.update({
-          where: { id: trade.id },
-          data: { status: "CLOSED", exitPrice: realExit, pnlUsd, closedAt: new Date(), externalOrderId: order.orderId },
-        });
-
-        await prisma.notification.create({
-          data: {
-            userId: trade.userId,
-            title: "Pozitsiya qo'lda yopildi",
-            message: `${trade.symbol} savdosi qo'lda yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$ (komissiya hisobga olingan)`,
-          },
-        });
-
-        return res.json({ success: true, exitPrice: realExit, pnlUsd });
+        const result = await recordRealTradeClose(
+          trade, trade.brokerAccount, adapter, creds,
+          realExit, trade.quantity, order.orderId,
+          "qo'lda yopildi"
+        );
+        return res.json({ success: true, exitPrice: result.exitPrice, pnlUsd: result.pnlUsd });
       } catch (err) {
         return res.status(502).json({
           message: `Birjaga buyurtma yuborib bo'lmadi: ${err instanceof Error ? err.message : "Noma'lum xato"}`,

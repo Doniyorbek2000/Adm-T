@@ -28,7 +28,7 @@ const BINANCE_BASE = "https://api.binance.com";
 
 // ─── OHLCV ma'lumotlarini Binance'dan olish ─────────────────────────────────
 
-interface Candle {
+export interface Candle {
   time: number;
   open: number;
   high: number;
@@ -53,6 +53,47 @@ export async function fetchCandles(symbol: string, interval: "15m" | "1h" | "4h"
       volume: Number(k[5]),
     }));
   });
+}
+
+/**
+ * Uzoq tarixiy davr uchun shamlarni sahifalab yuklaydi (Binance bitta
+ * so'rovda maks 1000 sham beradi). Backtest uchun ishlatiladi.
+ */
+export async function fetchCandlesRange(
+  symbol: string,
+  interval: "15m" | "1h" | "4h",
+  startTime: number,
+  endTime: number
+): Promise<Candle[]> {
+  const all: Candle[] = [];
+  let cursor = startTime;
+
+  while (cursor < endTime) {
+    const batch: Candle[] = await withRateLimit("binance:public", async () => {
+      const binanceSymbol = symbol.replace("/", "");
+      const url = `${BINANCE_BASE}/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&startTime=${cursor}&endTime=${endTime}&limit=1000`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Klines so'rovi muvaffaqiyatsiz: HTTP ${res.status}`);
+      const raw = (await res.json()) as any[][];
+      return raw.map((k) => ({
+        time:   Number(k[0]),
+        open:   Number(k[1]),
+        high:   Number(k[2]),
+        low:    Number(k[3]),
+        close:  Number(k[4]),
+        volume: Number(k[5]),
+      }));
+    });
+
+    if (batch.length === 0) break;
+    all.push(...batch);
+    const lastTime = batch[batch.length - 1].time;
+    if (lastTime <= cursor) break; // himoya: cheksiz siklga tushmaslik
+    cursor = lastTime + 1;
+    if (batch.length < 1000) break; // oxirgi sahifa
+  }
+
+  return all;
 }
 
 // ─── Indikator hisoblash yordamchi funksiyalari ──────────────────────────────
@@ -183,6 +224,15 @@ export async function analyzeSymbol(symbol: string, interval: "15m" | "1h" | "4h
     console.error(`[TA] ${symbol} shamlarini yuklashda xato:`, err instanceof Error ? err.message : err);
     return null;
   }
+  return analyzeCandles(candles);
+}
+
+/**
+ * Sof (pure) tahlil funksiyasi — tarmoqsiz, faqat berilgan shamlar ustida
+ * ishlaydi. Jonli tahlil (analyzeSymbol) ham, backtest ham AYNAN shu
+ * mantiqdan foydalanadi — strategiya sinovda va jonli rejimda bir xil.
+ */
+export function analyzeCandles(candles: Candle[]): TaSignal | null {
   if (candles.length < 60) return null;
 
   const closes  = candles.map((c) => c.close);

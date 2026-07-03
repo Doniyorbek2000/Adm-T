@@ -314,6 +314,15 @@ const ru: Record<TranslationKey, string> = {
   "admin.overview.recentTitle": "Недавно зарегистрированные",
   "admin.overview.noUsers": "Пользователей пока нет.",
 
+  // Admin - AI kill-switch
+  "admin.engine.title": "AI торговый движок",
+  "admin.engine.desc": "Экстренная остановка: пауза блокирует все НОВЫЕ сигналы и авто-сделки. Мониторинг и закрытие открытых позиций продолжается.",
+  "admin.engine.statusRunning": "Работает",
+  "admin.engine.statusPaused": "ОСТАНОВЛЕН",
+  "admin.engine.mode": "Режим биржи",
+  "admin.engine.pauseBtn": "Экстренная остановка",
+  "admin.engine.resumeBtn": "Возобновить движок",
+
   // Admin - users
   "admin.users.title": "Пользователи",
   "admin.users.subtitle": "Изменяйте тарифные планы, блокируйте или активируйте аккаунты.",

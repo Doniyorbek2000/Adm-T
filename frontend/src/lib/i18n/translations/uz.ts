@@ -314,6 +314,15 @@ const uz: Record<TranslationKey, string> = {
   "admin.overview.recentTitle": "Yaqinda ro'yxatdan o'tganlar",
   "admin.overview.noUsers": "Hozircha foydalanuvchilar yo'q.",
 
+  // Admin - AI dvigatel kill-switch
+  "admin.engine.title": "AI treding dvigateli",
+  "admin.engine.desc": "Favqulodda to'xtatish: pauza barcha YANGI signal va avto-savdolarni bloklaydi. Ochiq pozitsiyalarni kuzatish va yopish davom etadi.",
+  "admin.engine.statusRunning": "Ishlamoqda",
+  "admin.engine.statusPaused": "TO'XTATILGAN",
+  "admin.engine.mode": "Birja rejimi",
+  "admin.engine.pauseBtn": "Favqulodda to'xtatish",
+  "admin.engine.resumeBtn": "Dvigatelni yoqish",
+
   // Admin - users
   "admin.users.title": "Foydalanuvchilar",
   "admin.users.subtitle": "Obuna tariflarini o'zgartiring, hisoblarni bloklang yoki faollashtiring.",

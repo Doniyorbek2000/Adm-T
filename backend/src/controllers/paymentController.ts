@@ -6,6 +6,7 @@ import { prisma } from "../utils/prisma";
 import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { PLAN_LIMITS } from "../services/planLimits";
+import { amountsMatch, getUsdUzsRate, usdToUzs } from "../services/currency";
 import { env } from "../utils/env";
 
 /**
@@ -43,6 +44,11 @@ export const subscribe = asyncHandler(async (req: AuthedRequest, res: Response) 
   const paymentId = crypto.randomUUID();
   const amountUsd = planConfig.priceMonthlyUsd;
 
+  // Jonli kurs bo'yicha UZS summa to'lov yaratilganda QAT'IY belgilanadi —
+  // webhook aynan shu summani tekshiradi (kurs o'zgarsa ham mos bo'ladi)
+  const rate = await getUsdUzsRate();
+  const amountUzs = usdToUzs(amountUsd, rate);
+
   // Production (Click/Payme) da to'lov PENDING holatda yaratiladi va webhook
   // orqali tasdiqlanadi; sinov rejimida esa darhol PAID bo'ladi
   const isTestMode = env.paymentMode === "test";
@@ -54,6 +60,7 @@ export const subscribe = asyncHandler(async (req: AuthedRequest, res: Response) 
       userId: req.user!.id,
       plan: data.plan,
       amountUsd,
+      amountUzs,
       status: initialStatus,
       method: data.method,
       periodStart: now,
@@ -71,7 +78,7 @@ export const subscribe = asyncHandler(async (req: AuthedRequest, res: Response) 
   }
 
   // Click/Payme uchun to'lov ma'lumotlarini qaytarish (frontend redirect qiladi)
-  const paymentInfo = buildPaymentInfo(env.paymentMode, paymentId, amountUsd, req.user!.id);
+  const paymentInfo = buildPaymentInfo(env.paymentMode, paymentId, amountUzs, req.user!.id);
 
   res.status(201).json({
     payment,
@@ -80,10 +87,7 @@ export const subscribe = asyncHandler(async (req: AuthedRequest, res: Response) 
   });
 });
 
-function buildPaymentInfo(mode: string, paymentId: string, amountUsd: number, userId: string) {
-  // O'zbekiston so'miga taxminiy konvertatsiya (1 USD ≈ 12,500 UZS)
-  const amountUzs = Math.round(amountUsd * 12_500);
-
+function buildPaymentInfo(mode: string, paymentId: string, amountUzs: number, userId: string) {
   if (mode === "click") {
     return {
       provider: "Click",
@@ -144,6 +148,14 @@ export const clickWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
     return res.json({ error: 0, error_note: "Allaqachon to'langan" });
   }
 
+  // MUHIM: to'langan summa kutilgan summaga mos kelishini tekshirish —
+  // aks holda kam to'lab qimmat tarifni faollashtirish mumkin bo'lardi
+  const expectedUzs = payment.amountUzs ?? usdToUzs(payment.amountUsd, await getUsdUzsRate());
+  if (!amountsMatch(expectedUzs, Number(amount))) {
+    console.warn(`[Click] Summa mos emas: kutilgan ${expectedUzs} UZS, kelgan ${amount} (payment ${payment.id})`);
+    return res.json({ error: -2, error_note: "Noto'g'ri summa (INVALID AMOUNT)" });
+  }
+
   // action=0 — Prepare, action=1 — Complete
   if (Number(action) === 0) {
     return res.json({
@@ -161,7 +173,10 @@ export const clickWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
   }
 
   // To'lov muvaffaqiyatli — tarifni faollashtirish
-  await prisma.payment.update({ where: { id: payment.id }, data: { status: PaymentStatus.PAID } });
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: { status: PaymentStatus.PAID, providerTransId: String(click_trans_id) },
+  });
   const planConfig = PLAN_LIMITS[payment.plan as PlanType];
   await activatePlan(payment.userId, payment.plan as PlanType, payment.periodEnd, planConfig?.name ?? payment.plan);
 
@@ -193,10 +208,19 @@ export const paymeWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
 
   const { method, params, id: rpcId } = req.body;
 
+  // Payme summani TIYIN'da yuboradi (1 so'm = 100 tiyin)
+  const paymeAmountValid = async (payment: { amountUzs: number | null; amountUsd: number }, amountTiyin: unknown) => {
+    const expectedUzs = payment.amountUzs ?? usdToUzs(payment.amountUsd, await getUsdUzsRate());
+    return amountsMatch(expectedUzs * 100, Number(amountTiyin));
+  };
+
   if (method === "CheckPerformTransaction") {
     const payment = await prisma.payment.findUnique({ where: { id: params?.account?.order_id } });
     if (!payment || payment.status === PaymentStatus.PAID) {
       return res.json({ error: { code: -31050, message: { uz: "Buyurtma topilmadi" } }, id: rpcId });
+    }
+    if (!(await paymeAmountValid(payment, params?.amount))) {
+      return res.json({ error: { code: -31001, message: { uz: "Noto'g'ri summa" } }, id: rpcId });
     }
     return res.json({ result: { allow: true }, id: rpcId });
   }
@@ -205,6 +229,13 @@ export const paymeWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
     const payment = await prisma.payment.findUnique({ where: { id: params?.account?.order_id } });
     if (!payment) {
       return res.json({ error: { code: -31050, message: { uz: "Buyurtma topilmadi" } }, id: rpcId });
+    }
+    if (!(await paymeAmountValid(payment, params?.amount))) {
+      return res.json({ error: { code: -31001, message: { uz: "Noto'g'ri summa" } }, id: rpcId });
+    }
+    // Payme tranzaksiya ID'sini saqlaymiz — PerformTransaction faqat shu ID bilan keladi
+    if (params?.id) {
+      await prisma.payment.update({ where: { id: payment.id }, data: { providerTransId: String(params.id) } });
     }
     return res.json({
       result: {
@@ -218,7 +249,12 @@ export const paymeWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
 
   if (method === "PerformTransaction") {
     const payment = await prisma.payment.findFirst({
-      where: { id: params?.account?.order_id ?? params?.id },
+      where: {
+        OR: [
+          { id: params?.account?.order_id ?? "" },
+          { providerTransId: params?.id ? String(params.id) : "" },
+        ],
+      },
     });
     if (!payment) {
       return res.json({ error: { code: -31050, message: { uz: "Tranzaksiya topilmadi" } }, id: rpcId });
@@ -235,7 +271,12 @@ export const paymeWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
 
   if (method === "CancelTransaction") {
     const payment = await prisma.payment.findFirst({
-      where: { id: params?.account?.order_id ?? params?.id },
+      where: {
+        OR: [
+          { id: params?.account?.order_id ?? "" },
+          { providerTransId: params?.id ? String(params.id) : "" },
+        ],
+      },
     });
     if (payment && payment.status !== PaymentStatus.CANCELED) {
       await prisma.payment.update({ where: { id: payment.id }, data: { status: PaymentStatus.CANCELED } });

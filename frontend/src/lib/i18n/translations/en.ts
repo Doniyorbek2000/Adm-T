@@ -317,6 +317,15 @@ const en = {
   "admin.overview.recentTitle": "Recently registered",
   "admin.overview.noUsers": "No users yet.",
 
+  // Admin - AI engine kill-switch
+  "admin.engine.title": "AI trading engine",
+  "admin.engine.desc": "Emergency stop: pausing blocks all NEW signals and auto-trades. Monitoring and closing of open positions continues.",
+  "admin.engine.statusRunning": "Running",
+  "admin.engine.statusPaused": "PAUSED",
+  "admin.engine.mode": "Exchange mode",
+  "admin.engine.pauseBtn": "Emergency stop",
+  "admin.engine.resumeBtn": "Resume engine",
+
   // Admin - users
   "admin.users.title": "Users",
   "admin.users.subtitle": "Change subscription plans, block or activate accounts.",
