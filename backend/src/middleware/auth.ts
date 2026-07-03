@@ -27,10 +27,17 @@ export async function requireAuth(req: AuthedRequest, _res: Response, next: Next
       throw new AppError("Foydalanuvchi topilmadi yoki bloklangan", 401);
     }
 
+    // Tarif muddati tugagan bo'lsa FREE ga tushirish
+    let effectivePlan = user.plan as "FREE" | "PRO" | "ULTRA" | "VIP";
+    if (effectivePlan !== "FREE" && user.planExpiresAt && new Date() > user.planExpiresAt) {
+      effectivePlan = "FREE";
+      await prisma.user.update({ where: { id: user.id }, data: { plan: "FREE", planExpiresAt: null } });
+    }
+
     req.user = {
       id: user.id,
       role: user.role as "USER" | "ADMIN",
-      plan: user.plan as "FREE" | "PRO" | "ULTRA" | "VIP",
+      plan: effectivePlan,
       fullName: user.fullName,
       email: user.email,
     };

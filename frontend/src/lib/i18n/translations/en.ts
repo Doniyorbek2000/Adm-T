@@ -283,15 +283,8 @@ const en = {
   "payment.method.VISA": "Visa",
   "payment.method.MASTERCARD": "Mastercard",
   "payment.method.CLICK": "Click",
-  "payment.cardNumber": "Card number",
-  "payment.expiry": "Expiry (MM/YY)",
-  "payment.cvv": "CVC / CVV",
-  "payment.cardHolder": "Cardholder name",
-  "payment.cardHolderPlaceholder": "NAME SURNAME",
-  "payment.phoneNumber": "Phone number",
-  "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "Select a payment method",
-  "payment.secureNotice": "Your card details are processed securely through Click/Payme. We never store your card information.",
+  "payment.secureNotice": "Payment is processed securely through Click or Payme. We never store your card information.",
 
   // Notifications
   "dash.notifications.title": "Notifications",

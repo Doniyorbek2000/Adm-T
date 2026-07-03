@@ -27,6 +27,7 @@ export default function AccountsPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
 
   function load() {
     if (!token) return;
@@ -71,6 +72,28 @@ export default function AccountsPage() {
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("common.error.generic"));
+    }
+  }
+
+  async function handleSync(account: AccountDto) {
+    if (!token || syncingId) return;
+    setSyncingId(account.id);
+    setError(null);
+    try {
+      const res = await apiRequest<{ balanceUsd: number; synced: boolean; message?: string }>(
+        `/broker-accounts/${account.id}/sync`,
+        { method: "POST", token }
+      );
+      if (res.synced) {
+        setInfo(`${account.label}: balans yangilandi — $${res.balanceUsd.toLocaleString()}`);
+      } else {
+        setInfo(res.message ?? "Balans yangilanmadi");
+      }
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("common.error.generic"));
+    } finally {
+      setSyncingId(null);
     }
   }
 
@@ -167,9 +190,20 @@ export default function AccountsPage() {
               </p>
             </div>
 
-            <button onClick={() => handleDelete(acc)} className="mt-4 text-xs font-semibold text-rose-400 hover:underline">
-              {t("dash.accounts.disconnectAction")}
-            </button>
+            <div className="mt-4 flex items-center justify-between">
+              {acc.exchange !== "Demo" && (
+                <button
+                  onClick={() => handleSync(acc)}
+                  disabled={syncingId === acc.id}
+                  className="text-xs font-semibold text-sky-400 hover:underline disabled:opacity-50"
+                >
+                  {syncingId === acc.id ? "Yangilanmoqda..." : "↻ Balansni yangilash"}
+                </button>
+              )}
+              <button onClick={() => handleDelete(acc)} className="ml-auto text-xs font-semibold text-rose-400 hover:underline">
+                {t("dash.accounts.disconnectAction")}
+              </button>
+            </div>
           </div>
         ))}
 

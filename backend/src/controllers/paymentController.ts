@@ -182,13 +182,13 @@ export const clickWebhook = asyncHandler(async (req: AuthedRequest, res: Respons
 export const paymeWebhook = asyncHandler(async (req: AuthedRequest, res: Response) => {
   // Basic Auth tekshiruvi (Payme server o'z merchant kaliti bilan yuboradi)
   const authHeader = req.headers.authorization;
-  if (authHeader) {
-    const [, encoded] = authHeader.split(" ");
-    const decoded = Buffer.from(encoded ?? "", "base64").toString("utf8");
-    const [, password] = decoded.split(":");
-    if (password !== env.paymeKey) {
-      return res.json({ error: { code: -32504, message: { uz: "Avtorizatsiya xatosi" } } });
-    }
+  if (!authHeader?.startsWith("Basic ")) {
+    return res.status(401).json({ error: { code: -32504, message: { uz: "Avtorizatsiya talab qilinadi" } } });
+  }
+  const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
+  const password = decoded.split(":").slice(1).join(":");
+  if (!env.paymeKey || password !== env.paymeKey) {
+    return res.status(401).json({ error: { code: -32504, message: { uz: "Avtorizatsiya xatosi" } } });
   }
 
   const { method, params, id: rpcId } = req.body;

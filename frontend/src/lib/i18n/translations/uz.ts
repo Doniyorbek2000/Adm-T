@@ -280,15 +280,8 @@ const uz: Record<TranslationKey, string> = {
   "payment.method.VISA": "Visa",
   "payment.method.MASTERCARD": "Mastercard",
   "payment.method.CLICK": "Click",
-  "payment.cardNumber": "Karta raqami",
-  "payment.expiry": "Amal qilish muddati (OO/YY)",
-  "payment.cvv": "CVC / CVV",
-  "payment.cardHolder": "Karta egasining ismi",
-  "payment.cardHolderPlaceholder": "ISM FAMILIYA",
-  "payment.phoneNumber": "Telefon raqami",
-  "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "To'lov usulini tanlang",
-  "payment.secureNotice": "Karta ma'lumotlaringiz Click/Payme orqali xavfsiz tarzda qayta ishlanadi. Biz hech qachon karta ma'lumotlaringizni saqlamaymiz.",
+  "payment.secureNotice": "To'lov Click yoki Payme orqali xavfsiz tarzda amalga oshiriladi. Biz karta ma'lumotlaringizni hech qachon saqlamaymiz.",
 
   // Notifications
   "dash.notifications.title": "Bildirishnomalar",

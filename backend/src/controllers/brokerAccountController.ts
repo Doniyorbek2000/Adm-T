@@ -43,7 +43,6 @@ function serialize(account: any) {
     id: account.id,
     exchange: account.exchange,
     label: account.label,
-    apiKeyMasked: maskSecret(account.apiKeyEncrypted ? account.exchange : ""), // placeholder, real masked value set below
     server: account.server ?? null,
     isConnected: account.isConnected,
     mode: account.mode,
@@ -216,4 +215,32 @@ export const deleteAccount = asyncHandler(async (req: AuthedRequest, res: Respon
 
   await prisma.brokerAccount.delete({ where: { id: account.id } });
   res.json({ message: "Hisob uzildi" });
+});
+
+export const syncBalance = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const account = await prisma.brokerAccount.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+  if (!account) throw new AppError("Hisob topilmadi", 404);
+
+  if (account.exchange === "Demo") {
+    return res.json({ balanceUsd: account.balanceUsd, synced: false, message: "Demo hisob balansi birjadan yangilanmaydi" });
+  }
+
+  const adapter = getExchangeAdapter(account.exchange);
+  if (!adapter) {
+    return res.json({ balanceUsd: account.balanceUsd, synced: false, message: "Bu birja uchun avtomatik sinxronizatsiya mavjud emas" });
+  }
+
+  const { decryptSecret } = await import("../utils/crypto");
+  const credentials = {
+    apiKey: decryptSecret(account.apiKeyEncrypted, `${account.id}:apiKey`),
+    apiSecret: decryptSecret(account.apiSecretEncrypted, `${account.id}:apiSecret`),
+    passphrase: account.passphraseEncrypted
+      ? decryptSecret(account.passphraseEncrypted, `${account.id}:passphrase`)
+      : undefined,
+  };
+
+  const balanceUsd = await adapter.fetchQuoteBalance(credentials);
+  await prisma.brokerAccount.update({ where: { id: account.id }, data: { balanceUsd } });
+
+  res.json({ balanceUsd, synced: true });
 });

@@ -5,6 +5,7 @@ import {
   createDemoAccount,
   deleteAccount,
   listAccounts,
+  syncBalance,
   updateAccount,
 } from "../controllers/brokerAccountController";
 
@@ -15,6 +16,7 @@ router.get("/", listAccounts);
 router.post("/", connectAccount);
 router.post("/demo", createDemoAccount);
 router.patch("/:id", updateAccount);
+router.post("/:id/sync", syncBalance);
 router.delete("/:id", deleteAccount);
 
 export default router;

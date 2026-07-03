@@ -280,15 +280,8 @@ const ru: Record<TranslationKey, string> = {
   "payment.method.VISA": "Visa",
   "payment.method.MASTERCARD": "Mastercard",
   "payment.method.CLICK": "Click",
-  "payment.cardNumber": "Номер карты",
-  "payment.expiry": "Срок действия (ММ/ГГ)",
-  "payment.cvv": "CVC / CVV",
-  "payment.cardHolder": "Имя владельца карты",
-  "payment.cardHolderPlaceholder": "ИМЯ ФАМИЛИЯ",
-  "payment.phoneNumber": "Номер телефона",
-  "payment.phoneNumberPlaceholder": "+998 90 123 45 67",
   "payment.selectMethod": "Выберите способ оплаты",
-  "payment.secureNotice": "Данные вашей карты обрабатываются безопасно через Click/Payme. Мы никогда не сохраняем данные вашей карты.",
+  "payment.secureNotice": "Платёж обрабатывается безопасно через Click или Payme. Мы никогда не сохраняем данные вашей карты.",
 
   // Notifications
   "dash.notifications.title": "Уведомления",
