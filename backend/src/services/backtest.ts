@@ -1,4 +1,4 @@
-import { analyzeCandles, Candle, fetchCandlesRange } from "./technicalAnalysis";
+import { aggregateCandles, analyzeCandles, Candle, computeHtfContext, fetchCandlesRange } from "./technicalAnalysis";
 
 /**
  * Backtest mexanizmi — jonli AI strategiyasining AYNAN O'ZI (analyzeCandles)
@@ -92,7 +92,15 @@ export function runBacktest(
   let i = WARMUP_BARS;
   while (i < candles.length - 1) {
     const window = candles.slice(Math.max(0, i - ANALYSIS_WINDOW + 1), i + 1);
-    const signal = analyzeCandles(window);
+
+    // Yuqori timeframe konteksti — jonli rejimdagi kabi (LTF shamlaridan 4×
+    // birlashtirib olinadi, guruhlar aynan i-shamda tugaydi)
+    const htfStart = Math.max(0, i + 1 - 4 * ANALYSIS_WINDOW);
+    const htfSegment = candles.slice(htfStart, i + 1);
+    const htfCandles = aggregateCandles(htfSegment.slice(htfSegment.length % 4), 4);
+    const htf = computeHtfContext(htfCandles);
+
+    const signal = analyzeCandles(window, htf);
 
     if (!signal || signal.direction === "HOLD") {
       i++;

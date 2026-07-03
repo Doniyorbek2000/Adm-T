@@ -39,6 +39,14 @@ export const env = {
 
   // MetaApi (MT5 ko'prigi) — metaapi.cloud hisobidagi API kaliti
   metaApiToken: process.env.METAAPI_TOKEN ?? "",
+
+  // Futures leverage (konservativ standart: 3x). Katta leverage = katta
+  // likvidatsiya xavfi; pozitsiya o'lchamini baribir risk-menejer boshqaradi.
+  futuresLeverage: Math.max(1, Math.min(20, Number(process.env.FUTURES_LEVERAGE) || 3)),
+
+  // Telegram xabarnomalar (ixtiyoriy): bot token va chat ID
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+  telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",
 };
 
 /**

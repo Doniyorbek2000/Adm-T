@@ -127,6 +127,100 @@ export async function checkTradeAllowed(params: {
   return { allowed: true };
 }
 
+/**
+ * Signal yaratilgandan keyin narx qanchalik "qochib ketganini" tekshiradi.
+ * Kirish endi foydasiz bo'lsa (SL tomonga yarim yo'l bosilgan yoki TP tomonga
+ * 30% dan ortiq ketilgan) — savdo OCHILMAYDI, eskirgan signalga kirish
+ * matematik jihatdan yutqazuvchi o'yin.
+ */
+export function isEntryStillValid(
+  direction: "BUY" | "SELL",
+  entryPrice: number,
+  takeProfit: number,
+  stopLoss: number,
+  currentPrice: number
+): boolean {
+  if (!(entryPrice > 0) || !(currentPrice > 0)) return false;
+
+  if (direction === "BUY") {
+    const slDist = entryPrice - stopLoss;
+    const tpDist = takeProfit - entryPrice;
+    if (slDist <= 0 || tpDist <= 0) return false;
+    if (currentPrice <= entryPrice - 0.5 * slDist) return false; // SL tomonga yarim yo'l
+    if (currentPrice >= entryPrice + 0.3 * tpDist) return false; // TP tomonga 30%+ ketgan
+    return true;
+  }
+
+  const slDist = stopLoss - entryPrice;
+  const tpDist = entryPrice - takeProfit;
+  if (slDist <= 0 || tpDist <= 0) return false;
+  if (currentPrice >= entryPrice + 0.5 * slDist) return false;
+  if (currentPrice <= entryPrice - 0.3 * tpDist) return false;
+  return true;
+}
+
+export interface TrailAdvice {
+  newStopLoss: number;
+  reason: "BREAK_EVEN" | "TRAIL";
+}
+
+/** Trailing yangilanishi uchun minimal yaxshilanish (R birligida) — birjaga ortiqcha so'rov yubormaslik uchun */
+const TRAIL_MIN_IMPROVEMENT_R = 0.5;
+
+/**
+ * Break-even va trailing stop mantiqi (sof funksiya):
+ *  - Narx 1R foydaga yetganda SL zararsiz nuqtaga (entry ± komissiya buferi)
+ *    ko'chiriladi — savdo endi yutqaza olmaydi.
+ *  - Undan keyin SL narxdan 1R orqada ergashadi, faqat 0.5R dan ortiq
+ *    yaxshilanish bo'lsa yangilanadi (birja API churn'ini oldini olish).
+ * null — hozircha hech narsa o'zgartirilmasin.
+ */
+export function computeTrailedStop(params: {
+  direction: "BUY" | "SELL";
+  entryPrice: number;
+  initialStopLoss: number;
+  currentStopLoss: number;
+  currentPrice: number;
+  breakEvenApplied: boolean;
+}): TrailAdvice | null {
+  const { direction, entryPrice, initialStopLoss, currentStopLoss, currentPrice, breakEvenApplied } = params;
+
+  if (direction === "BUY") {
+    const r = entryPrice - initialStopLoss;
+    if (r <= 0) return null;
+
+    if (!breakEvenApplied) {
+      if (currentPrice >= entryPrice + r) {
+        return { newStopLoss: Number((entryPrice * 1.002).toFixed(8)), reason: "BREAK_EVEN" };
+      }
+      return null;
+    }
+
+    const candidate = currentPrice - r;
+    if (candidate >= currentStopLoss + TRAIL_MIN_IMPROVEMENT_R * r) {
+      return { newStopLoss: Number(candidate.toFixed(8)), reason: "TRAIL" };
+    }
+    return null;
+  }
+
+  // SELL (short): hammasi teskari
+  const r = initialStopLoss - entryPrice;
+  if (r <= 0) return null;
+
+  if (!breakEvenApplied) {
+    if (currentPrice <= entryPrice - r) {
+      return { newStopLoss: Number((entryPrice * 0.998).toFixed(8)), reason: "BREAK_EVEN" };
+    }
+    return null;
+  }
+
+  const candidate = currentPrice + r;
+  if (candidate <= currentStopLoss - TRAIL_MIN_IMPROVEMENT_R * r) {
+    return { newStopLoss: Number(candidate.toFixed(8)), reason: "TRAIL" };
+  }
+  return null;
+}
+
 /** Hisobning ochiq pozitsiyalarga band qilingan kapitali (USD) */
 export async function deployedCapitalUsd(accountId: string): Promise<number> {
   const openTrades = await prisma.trade.findMany({

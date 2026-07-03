@@ -179,6 +179,105 @@ function bollinger(closes: number[], period = 20, mult = 2) {
   return { upper, middle, lower };
 }
 
+/**
+ * ADX (Average Directional Index, Wilder) — trend KUCHINI o'lchaydi
+ * (yo'nalishini emas). ADX > 25 — kuchli trend, ADX < 20 — diapazon (range).
+ * Qaytariladigan massiv shamlar bilan bir xil uzunlikda (boshi NaN).
+ */
+export function adx(candles: Candle[], period = 14): number[] {
+  const len = candles.length;
+  const result: number[] = new Array(len).fill(NaN);
+  if (len < period * 2 + 1) return result;
+
+  const plusDM: number[] = [];
+  const minusDM: number[] = [];
+  const trs: number[] = [];
+
+  for (let i = 1; i < len; i++) {
+    const upMove = candles[i].high - candles[i - 1].high;
+    const downMove = candles[i - 1].low - candles[i].low;
+    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    const hl = candles[i].high - candles[i].low;
+    const hc = Math.abs(candles[i].high - candles[i - 1].close);
+    const lc = Math.abs(candles[i].low - candles[i - 1].close);
+    trs.push(Math.max(hl, hc, lc));
+  }
+
+  // Wilder yumshatish (smoothing)
+  let smPlus = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  let smMinus = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  let smTr = trs.slice(0, period).reduce((a, b) => a + b, 0);
+
+  const dxValues: number[] = [];
+  for (let i = period; i < trs.length; i++) {
+    smPlus = smPlus - smPlus / period + plusDM[i];
+    smMinus = smMinus - smMinus / period + minusDM[i];
+    smTr = smTr - smTr / period + trs[i];
+
+    const diPlus = smTr > 0 ? (100 * smPlus) / smTr : 0;
+    const diMinus = smTr > 0 ? (100 * smMinus) / smTr : 0;
+    const diSum = diPlus + diMinus;
+    dxValues.push(diSum > 0 ? (100 * Math.abs(diPlus - diMinus)) / diSum : 0);
+  }
+
+  // ADX = DX'ning Wilder o'rtachasi
+  let adxVal = dxValues.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  // dxValues[k] mos keladigan sham indeksi: k + period + 1
+  result[period * 2] = adxVal;
+  for (let k = period; k < dxValues.length; k++) {
+    adxVal = (adxVal * (period - 1) + dxValues[k]) / period;
+    result[k + period + 1] = adxVal;
+  }
+  return result;
+}
+
+/** Kichik timeframe shamlarini kattaroq timeframe'ga birlashtirish (masalan, 1h → 4h) */
+export function aggregateCandles(candles: Candle[], factor: number): Candle[] {
+  const result: Candle[] = [];
+  for (let i = 0; i + factor <= candles.length; i += factor) {
+    const group = candles.slice(i, i + factor);
+    result.push({
+      time: group[0].time,
+      open: group[0].open,
+      high: Math.max(...group.map((c) => c.high)),
+      low: Math.min(...group.map((c) => c.low)),
+      close: group[group.length - 1].close,
+      volume: group.reduce((s, c) => s + c.volume, 0),
+    });
+  }
+  return result;
+}
+
+/** Yuqori timeframe (4h) trend konteksti — 1h kirishlarni filtrlash uchun */
+export interface HtfContext {
+  trend: "BULL" | "BEAR" | "NEUTRAL";
+  adx: number;
+}
+
+/** 4h shamlardan trend kontekstini hisoblaydi (sof funksiya) */
+export function computeHtfContext(htfCandles: Candle[]): HtfContext | null {
+  if (htfCandles.length < 60) return null;
+
+  const closes = htfCandles.map((c) => c.close);
+  const current = closes[closes.length - 1];
+  const ema20Vals = ema(closes, 20);
+  const ema50Vals = ema(closes, 50);
+  const adxVals = adx(htfCandles);
+
+  const lastEma20 = ema20Vals[ema20Vals.length - 1];
+  const lastEma50 = ema50Vals[ema50Vals.length - 1];
+  const lastAdx = adxVals[adxVals.length - 1];
+
+  if (isNaN(lastEma20) || isNaN(lastEma50)) return null;
+
+  let trend: HtfContext["trend"] = "NEUTRAL";
+  if (current > lastEma50 && lastEma20 > lastEma50) trend = "BULL";
+  else if (current < lastEma50 && lastEma20 < lastEma50) trend = "BEAR";
+
+  return { trend, adx: isNaN(lastAdx) ? 0 : Number(lastAdx.toFixed(1)) };
+}
+
 function stochastic(candles: Candle[], kPeriod = 14, dPeriod = 3) {
   const kValues: number[] = [];
   for (let i = 0; i < candles.length; i++) {
@@ -218,21 +317,30 @@ export interface TaSignal {
 
 export async function analyzeSymbol(symbol: string, interval: "15m" | "1h" | "4h" = "1h"): Promise<TaSignal | null> {
   let candles: Candle[];
+  let htfCandles: Candle[] | null = null;
   try {
     candles = await fetchCandles(symbol, interval, 200);
+    // Yuqori timeframe (4h) — trend filtri uchun
+    htfCandles = await fetchCandles(symbol, "4h", 200);
   } catch (err) {
     console.error(`[TA] ${symbol} shamlarini yuklashda xato:`, err instanceof Error ? err.message : err);
-    return null;
+    if (!candles!) return null;
   }
-  return analyzeCandles(candles);
+  const htf = htfCandles ? computeHtfContext(htfCandles) : null;
+  return analyzeCandles(candles, htf);
 }
 
 /**
  * Sof (pure) tahlil funksiyasi — tarmoqsiz, faqat berilgan shamlar ustida
  * ishlaydi. Jonli tahlil (analyzeSymbol) ham, backtest ham AYNAN shu
  * mantiqdan foydalanadi — strategiya sinovda va jonli rejimda bir xil.
+ *
+ * htf — yuqori timeframe (4h) trend konteksti:
+ *  - Kuchli 4h tushish trendida (BEAR + ADX≥25) BUY bloklanadi ("pichoq ushlash")
+ *  - Kuchli 4h ko'tarilish trendida SELL bloklanadi
+ *  - Trend bilan mos signal qo'shimcha vazn oladi
  */
-export function analyzeCandles(candles: Candle[]): TaSignal | null {
+export function analyzeCandles(candles: Candle[], htf: HtfContext | null = null): TaSignal | null {
   if (candles.length < 60) return null;
 
   const closes  = candles.map((c) => c.close);
@@ -300,6 +408,25 @@ export function analyzeCandles(candles: Candle[]): TaSignal | null {
   if (lastStochK < 20 && prevStochK < lastStochK) buySignals.push({ desc: "Stochastic oversold zonadan chiqmoqda", weight: 2 });
   if (lastStochK > 80 && prevStochK > lastStochK) sellSignals.push({ desc: "Stochastic overbought zonadan tushmoqda", weight: 2 });
 
+  // Hajm tasdig'i: oxirgi sham hajmi 20-sham o'rtachasidan sezilarli yuqori
+  // bo'lsa, sham yo'nalishidagi bosim haqiqiy deb hisoblanadi
+  const volumes = candles.map((c) => c.volume);
+  const volWindow = volumes.slice(-20);
+  const volSma = volWindow.reduce((a, b) => a + b, 0) / volWindow.length;
+  const volumeRatio = volSma > 0 ? volumes[volumes.length - 1] / volSma : 1;
+  const lastCandle = candles[candles.length - 1];
+  if (volumeRatio >= 1.25) {
+    if (lastCandle.close >= lastCandle.open) {
+      buySignals.push({ desc: `Hajm o'rtachadan ${Math.round((volumeRatio - 1) * 100)}% yuqori — xarid bosimi`, weight: 1 });
+    } else {
+      sellSignals.push({ desc: `Hajm o'rtachadan ${Math.round((volumeRatio - 1) * 100)}% yuqori — sotish bosimi`, weight: 1 });
+    }
+  }
+
+  // Yuqori timeframe (4h) trend mosligi — trend bilan savdo qilish mukofotlanadi
+  if (htf?.trend === "BULL") buySignals.push({ desc: `4h trend ko'tarilishda (ADX ${htf.adx})`, weight: 2 });
+  if (htf?.trend === "BEAR") sellSignals.push({ desc: `4h trend tushishda (ADX ${htf.adx})`, weight: 2 });
+
   // ─── Qaror ───────────────────────────────────────────────────────────────
   const buyScore  = buySignals.reduce((s, b) => s + b.weight, 0);
   const sellScore = sellSignals.reduce((s, b) => s + b.weight, 0);
@@ -308,12 +435,23 @@ export function analyzeCandles(candles: Candle[]): TaSignal | null {
   if (buyScore < 4 && sellScore < 4) return null;
 
   const direction: "BUY" | "SELL" = buyScore >= sellScore ? "BUY" : "SELL";
+
+  // Kuchli 4h trendga QARSHI savdo bloklanadi: kuchli tushishda BUY —
+  // "pichoq ushlash", kuchli ko'tarilishda SELL — trendga qarshi kurash
+  if (htf && htf.adx >= 25) {
+    if (direction === "BUY" && htf.trend === "BEAR") return null;
+    if (direction === "SELL" && htf.trend === "BULL") return null;
+  }
+
   const activeSignals = direction === "BUY" ? buySignals : sellSignals;
-  const maxScore      = 12; // to'liq tasdiqlash uchun maksimal ball
+  const maxScore      = 15; // to'liq tasdiqlash uchun maksimal ball (hajm+HTF bilan)
   const scoreUsed     = direction === "BUY" ? buyScore : sellScore;
 
   // Ishonch darajasi (55-95% oralig'ida)
-  const confidence = Math.min(95, Math.max(55, Math.round(55 + (scoreUsed / maxScore) * 40)));
+  let confidence = Math.min(95, Math.max(55, Math.round(55 + (scoreUsed / maxScore) * 40)));
+
+  // Juda past hajmda ishonch pasayadi — harakat "quruq" bo'lishi mumkin
+  if (volumeRatio < 0.6) confidence = Math.max(55, confidence - 5);
 
   // ATR asosida dinamik TP/SL (Risk:Reward = 1:2)
   const atrMultTp = 2.0;

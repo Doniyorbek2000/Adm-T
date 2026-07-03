@@ -12,6 +12,7 @@ interface AccountDto {
   server?: string | null;
   isConnected: boolean;
   mode: "SIGNAL_ONLY" | "AUTO_TRADE";
+  marketType?: "SPOT" | "FUTURES";
   riskLevel: number;
   balanceUsd: number;
   createdAt: string;
@@ -85,7 +86,7 @@ export default function AccountsPage() {
         `${acc.exchange} · ${acc.label} hisobingizda AI mustaqil ravishda\n` +
         `REAL pul bilan savdo qiladi!\n\n` +
         `• Balans: $${acc.balanceUsd.toLocaleString()}\n` +
-        `• Risk darajasi: ${acc.riskLevel === 1 ? "Past (3%)" : acc.riskLevel === 2 ? "O'rta (7%)" : "Yuqori (15%)"}\n\n` +
+        `• Risk: har savdoda balansning ${acc.riskLevel === 1 ? "0.5%" : acc.riskLevel === 2 ? "1%" : "2%"} tavakkal qilinadi (SL asosida)\n\n` +
         `Davom etishni xohlaysizmi?`
       );
       if (!confirmed) return;
@@ -278,6 +279,11 @@ function AccountCard({
             {isDemo ? "" : ` · ••••${acc.id.slice(-4)}`}
           </p>
         </div>
+        {acc.marketType === "FUTURES" && (
+          <span className="shrink-0 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">
+            FUTURES
+          </span>
+        )}
         <span
           className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
             acc.isConnected
@@ -415,11 +421,13 @@ function ConnectForm({
   const [passphrase, setPassphrase] = useState("");
   const [server, setServer]         = useState("");
   const [mode, setMode]             = useState<"SIGNAL_ONLY" | "AUTO_TRADE">("AUTO_TRADE");
+  const [marketType, setMarketType] = useState<"SPOT" | "FUTURES">("SPOT");
   const [riskLevel, setRiskLevel]   = useState(2);
   const [submitting, setSubmitting] = useState(false);
 
   const isMt5              = exchange === "MT5";
   const requiresPassphrase = exchange === "OKX" || exchange === "KuCoin";
+  const supportsFutures    = exchange === "Binance";
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -438,6 +446,7 @@ function ConnectForm({
           server:     isMt5 ? server.trim() : undefined,
           mode,
           riskLevel,
+          marketType: supportsFutures ? marketType : "SPOT",
         },
       });
       onSuccess();
@@ -524,6 +533,38 @@ function ConnectForm({
           </div>
         )}
       </div>
+
+      {/* Market type — faqat Binance uchun */}
+      {supportsFutures && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-slate-400">Bozor turi</p>
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" onClick={() => setMarketType("SPOT")}
+              className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
+                marketType === "SPOT"
+                  ? "border-emerald-400/40 bg-emerald-400/10"
+                  : "border-white/10 bg-white/[0.03] hover:border-white/20"
+              }`}>
+              <p className={`font-semibold ${marketType === "SPOT" ? "text-emerald-300" : "text-slate-300"}`}>Spot</p>
+              <p className="mt-1 text-xs text-slate-500">Faqat BUY signallari bajariladi. Leverage yo'q — eng xavfsiz.</p>
+            </button>
+            <button type="button" onClick={() => setMarketType("FUTURES")}
+              className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
+                marketType === "FUTURES"
+                  ? "border-amber-400/40 bg-amber-400/10"
+                  : "border-white/10 bg-white/[0.03] hover:border-white/20"
+              }`}>
+              <p className={`font-semibold ${marketType === "FUTURES" ? "text-amber-300" : "text-slate-300"}`}>Futures (USDT-M)</p>
+              <p className="mt-1 text-xs text-slate-500">BUY (long) va SELL (short) ikkalasi ham bajariladi. Past leverage, TP/SL birja tomonida.</p>
+            </button>
+          </div>
+          {marketType === "FUTURES" && (
+            <p className="mt-2 text-xs text-amber-400/80">
+              ⚠ API kalitda "Futures" ruxsati yoqilgan bo'lishi shart. Pozitsiya o'lchamini risk-menejer boshqaradi, leverage past (3x) tutiladi.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Mode */}
       <div>

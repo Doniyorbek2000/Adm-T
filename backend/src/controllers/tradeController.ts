@@ -4,7 +4,7 @@ import { asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { fetchSpotPrice } from "../services/exchanges/binance";
 import { getExchangeAdapter } from "../services/exchanges/registry";
-import { decryptCredentials, recordRealTradeClose } from "../services/aiEngine";
+import { closeFuturesTradeAndRecord, decryptCredentials, recordRealTradeClose } from "../services/aiEngine";
 
 export const listMyTrades = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const trades = await prisma.trade.findMany({
@@ -55,6 +55,15 @@ export const closeTrade = asyncHandler(async (req: AuthedRequest, res: Response)
 
   if (!trade) {
     return res.status(404).json({ message: "Savdo topilmadi yoki allaqachon yopilgan" });
+  }
+
+  // Futures savdosi — alohida yopish yo'li (himoya tozalanadi, realized PnL yoziladi)
+  if (trade.marketType === "FUTURES" && trade.brokerAccount) {
+    const result = await closeFuturesTradeAndRecord(trade, trade.brokerAccount, "qo'lda yopildi");
+    if (!result) {
+      return res.status(502).json({ message: "Futures pozitsiyasini yopib bo'lmadi. Qayta urinib ko'ring yoki Binance'da tekshiring." });
+    }
+    return res.json({ success: true, exitPrice: result.exitPrice, pnlUsd: result.pnlUsd });
   }
 
   // Get current market price

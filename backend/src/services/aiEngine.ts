@@ -1,11 +1,32 @@
 import { PlanType, SignalDirection, SignalStatus } from "../constants/enums";
 import { prisma } from "../utils/prisma";
 import { decryptSecret } from "../utils/crypto";
-import { exchangeMode, fetchSpotPrice } from "./exchanges/binance";
+import { env } from "../utils/env";
+import { exchangeMode, fetchSpotPrice, floorToStep } from "./exchanges/binance";
+import {
+  futuresAvailableUsdt,
+  futuresCancelAllOrders,
+  futuresClosePosition,
+  futuresGetFilters,
+  futuresOpenPosition,
+  futuresPlaceProtection,
+  futuresPositionAmt,
+  futuresRealizedPnl,
+  futuresSetLeverage,
+  futuresTotalUsdt,
+} from "./exchanges/binanceFutures";
 import { ExchangeAdapter, ExchangeCredentials, getExchangeAdapter, isRealExchangeIntegrated } from "./exchanges/registry";
+import { notifyUser } from "./notifier";
 import { PLAN_LIMITS } from "./planLimits";
 import { isAiEnginePaused } from "./platformSettings";
-import { checkTradeAllowed, computePositionSizeUsd, deployedCapitalUsd, getRiskProfile } from "./riskManager";
+import {
+  checkTradeAllowed,
+  computePositionSizeUsd,
+  computeTrailedStop,
+  deployedCapitalUsd,
+  getRiskProfile,
+  isEntryStillValid,
+} from "./riskManager";
 import { findBestSignal } from "./technicalAnalysis";
 
 const SYMBOLS = [
@@ -31,8 +52,8 @@ function minPlanForConfidence(confidence: number): PlanType {
 
 /**
  * Haqiqiy texnik tahlil asosida signal yaratadi.
- * RSI, MACD, EMA, BB, Stochastic, ATR indikatorlaridan foydalanadi.
- * Tasodifiy emas — real bozor ma'lumotlariga asoslangan.
+ * RSI, MACD, EMA, BB, Stochastic, ATR + 4h trend (ADX) filtri va hajm
+ * tasdig'idan foydalanadi. Tasodifiy emas — real bozor ma'lumotlariga asoslangan.
  */
 export async function generateSignal() {
   const result = await findBestSignal(SYMBOLS);
@@ -74,14 +95,16 @@ export async function generateSignal() {
 
 /**
  * Faol signallarni HAQIQIY Binance narxi bilan solishtirib yopadi.
- * TP/SL darajasiga narx yetganda — yopiladi. Tasodifiy emas, real bozorga asoslangan.
- * 48 soatdan oshgan signallar joriy narxda majburiy yopiladi (EXPIRED —
- * statistika buzilmasligi uchun TP/SL deb emas, alohida yozib boriladi).
+ * TP/SL darajasiga narx yetganda — yopiladi. 48 soatdan oshgan signallar
+ * joriy narxda majburiy yopiladi (EXPIRED status bilan).
  */
 export async function evaluateOpenSignals() {
-  // Avval birja tomonidagi OCO himoya buyurtmalari holatini sinxronlaymiz —
-  // TP/SL birjada bajarilgan bo'lishi mumkin (server kuzatuvidan tezroq)
+  // 1) Birja tomonidagi himoyalar holati: spot OCO va futures pozitsiyalari
   await syncProtectedTrades();
+  await syncFuturesTrades();
+
+  // 2) Break-even / trailing stop boshqaruvi va per-trade yopishlar
+  await manageOpenTrades();
 
   const minAgeCutoff  = new Date(Date.now() - 3 * 60 * 1000);
   const expiryCutoff  = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -153,7 +176,9 @@ async function closeTradesForSignal(signalId: string, fallbackExitPrice: number,
   });
 
   for (const trade of openTrades) {
-    if (isRealExchangeTrade(trade)) {
+    if (trade.marketType === "FUTURES" && trade.brokerAccount) {
+      await closeFuturesTradeAndRecord(trade, trade.brokerAccount, "signal yopildi");
+    } else if (isRealExchangeTrade(trade)) {
       await closeRealExchangeTrade(trade, trade.brokerAccount!, fallbackExitPrice, fallbackResultPnlPct);
     } else {
       await closeSimulatedTrade(trade, fallbackExitPrice, fallbackResultPnlPct);
@@ -172,23 +197,28 @@ async function retryStuckRealTrades() {
   });
 
   for (const trade of stuck) {
-    if (!isRealExchangeTrade(trade) || !trade.signal) continue;
+    if (!trade.brokerAccount || !trade.signal) continue;
+    if (trade.marketType === "FUTURES") {
+      await closeFuturesTradeAndRecord(trade, trade.brokerAccount, "signal yopilgan (qayta urinish)");
+      continue;
+    }
+    if (!isRealExchangeTrade(trade)) continue;
     const fallbackExit =
       trade.signal.status === SignalStatus.TP_HIT ? trade.signal.takeProfit :
       trade.signal.status === SignalStatus.SL_HIT ? trade.signal.stopLoss :
       trade.entryPrice;
-    await closeRealExchangeTrade(trade, trade.brokerAccount!, fallbackExit, trade.signal.resultPnlPct ?? 0);
+    await closeRealExchangeTrade(trade, trade.brokerAccount, fallbackExit, trade.signal.resultPnlPct ?? 0);
   }
 }
 
 /**
- * Birja tomonidagi OCO (TP/SL) buyurtmalari holatini tekshiradi.
+ * Birja tomonidagi spot OCO (TP/SL) buyurtmalari holatini tekshiradi.
  * Bajarilgan bo'lsa — savdoni REAL chiqish narxi bilan yopadi.
  * Birjada qo'lda bekor qilingan bo'lsa — server kuzatuviga qaytaradi.
  */
 async function syncProtectedTrades() {
   const trades = await prisma.trade.findMany({
-    where: { status: "OPEN", ocoOrderListId: { not: null } },
+    where: { status: "OPEN", ocoOrderListId: { not: null }, marketType: "SPOT" },
     include: { brokerAccount: true },
   });
 
@@ -230,6 +260,247 @@ async function syncProtectedTrades() {
   }
 }
 
+/**
+ * Futures pozitsiyalarini sinxronlaydi: birja tomonidagi TP/SL ishlagan
+ * bo'lsa (pozitsiya = 0), haqiqiy realized PnL bilan DB'da yopadi va qolgan
+ * himoya buyurtmasini tozalaydi.
+ */
+async function syncFuturesTrades() {
+  const trades = await prisma.trade.findMany({
+    where: { status: "OPEN", marketType: "FUTURES" },
+    include: { brokerAccount: true },
+  });
+
+  for (const trade of trades) {
+    const account = trade.brokerAccount;
+    if (!account) continue;
+
+    let creds: ExchangeCredentials;
+    try {
+      creds = decryptCredentials(account);
+    } catch {
+      continue;
+    }
+
+    try {
+      const amt = await futuresPositionAmt(creds, trade.symbol);
+      const expectedSign = trade.direction === "BUY" ? 1 : -1;
+      const stillOpen = Math.abs(amt) > 1e-9 && Math.sign(amt) === expectedSign;
+      if (stillOpen) continue;
+
+      // Pozitsiya birjada yopilgan (TP yoki SL ishlagan) — tozalash va yozish
+      try {
+        await futuresCancelAllOrders(creds, trade.symbol);
+      } catch {
+        // qoldiq buyurtma bo'lmasligi mumkin — muammo emas
+      }
+
+      const realized = await futuresRealizedPnl(creds, trade.symbol, trade.openedAt.getTime() - 1000);
+      const pnlUsd = Number((realized.pnlUsd - realized.feeUsd).toFixed(2));
+      const exitPrice = realized.lastPrice ?? trade.stopLossPrice ?? trade.entryPrice;
+
+      await prisma.trade.update({
+        where: { id: trade.id },
+        data: { status: "CLOSED", exitPrice, pnlUsd, feeUsd: realized.feeUsd, closedAt: new Date() },
+      });
+
+      await syncFuturesAccountBalance(account.id, creds);
+
+      await notifyUser(
+        trade.userId,
+        pnlUsd >= 0 ? "Futures savdosi foyda bilan yopildi" : "Futures savdosi zarar bilan yopildi",
+        `${trade.symbol} ${trade.direction === "BUY" ? "LONG" : "SHORT"} pozitsiyasi birja tomonidagi TP/SL bilan yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$ (komissiya hisobga olingan)`
+      );
+    } catch (err) {
+      console.error(`[AI Engine] Futures trade ${trade.id} sinxronlashda xato:`, err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+/**
+ * Ochiq savdolarni faol boshqarish:
+ *  1) SIMULATED va himoyasiz real savdolarni o'zining (ehtimol ko'chirilgan)
+ *     TP/SL darajalariga qarab yopish
+ *  2) Break-even: 1R foydada SL zararsiz nuqtaga ko'chiriladi
+ *  3) Trailing: undan keyin SL narxdan 1R orqada ergashadi
+ * Birja tomonidagi himoyalar (spot OCO / futures) yangi SL bilan qayta
+ * joylashtiriladi.
+ */
+async function manageOpenTrades() {
+  const trades = await prisma.trade.findMany({
+    where: { status: "OPEN", stopLossPrice: { not: null }, takeProfitPrice: { not: null } },
+    include: { brokerAccount: true, signal: true },
+  });
+  if (trades.length === 0) return;
+
+  // Har simvol uchun narxni bir marta olish
+  const prices = new Map<string, number>();
+  for (const symbol of new Set(trades.map((t) => t.symbol))) {
+    try {
+      prices.set(symbol, await fetchSpotPrice(symbol));
+    } catch {
+      // narx olinmasa bu simvol savdolari keyingi siklda boshqariladi
+    }
+  }
+
+  for (const trade of trades) {
+    const price = prices.get(trade.symbol);
+    if (!price || !trade.stopLossPrice || !trade.takeProfitPrice) continue;
+
+    const isBuy = trade.direction === "BUY";
+    const sl = trade.stopLossPrice;
+    const tp = trade.takeProfitPrice;
+
+    // ── 1) Per-trade TP/SL yopish (faqat birja himoyasi YO'Q savdolar uchun;
+    //       himoyali savdolarni birjaning o'zi yopadi, sync bosqichi yozadi)
+    const hasExchangeProtection = !!trade.ocoOrderListId;
+    if (!hasExchangeProtection) {
+      let exitPrice: number | null = null;
+      if (isBuy) {
+        if (price <= sl) exitPrice = Math.min(price, sl);
+        else if (price >= tp) exitPrice = tp;
+      } else {
+        if (price >= sl) exitPrice = Math.max(price, sl);
+        else if (price <= tp) exitPrice = tp;
+      }
+
+      if (exitPrice !== null) {
+        const pnlPct = isBuy
+          ? ((exitPrice - trade.entryPrice) / trade.entryPrice) * 100
+          : ((trade.entryPrice - exitPrice) / trade.entryPrice) * 100;
+
+        if (trade.marketType === "FUTURES" && trade.brokerAccount) {
+          await closeFuturesTradeAndRecord(trade, trade.brokerAccount, "TP/SL darajasiga yetdi");
+        } else if (isRealExchangeTrade(trade)) {
+          await closeRealExchangeTrade(trade, trade.brokerAccount!, exitPrice, pnlPct);
+        } else {
+          await closeSimulatedTrade(trade, exitPrice, pnlPct);
+        }
+        continue;
+      }
+    }
+
+    // ── 2) Break-even / trailing
+    const initialSl = trade.signal?.stopLoss;
+    if (!initialSl) continue;
+
+    const advice = computeTrailedStop({
+      direction: isBuy ? "BUY" : "SELL",
+      entryPrice: trade.entryPrice,
+      initialStopLoss: initialSl,
+      currentStopLoss: sl,
+      currentPrice: price,
+      breakEvenApplied: trade.breakEvenApplied,
+    });
+    if (!advice) continue;
+
+    const applied = await applyNewStopLoss(trade, advice.newStopLoss);
+    if (applied) {
+      const label = advice.reason === "BREAK_EVEN" ? "zararsiz nuqtaga (break-even)" : "trailing bo'yicha";
+      console.log(`[AI Engine] Trade ${trade.id}: SL ${label} ko'chirildi → ${advice.newStopLoss}`);
+      if (advice.reason === "BREAK_EVEN") {
+        await notifyUser(
+          trade.userId,
+          "Stop-loss zararsiz nuqtaga ko'chirildi",
+          `${trade.symbol} ${isBuy ? "LONG" : "SHORT"} savdosi +1R foydaga yetdi — endi bu savdo zarar bilan yopilishi mumkin emas.`
+        );
+      }
+    }
+  }
+}
+
+/** Yangi SL'ni savdo turiga qarab qo'llaydi (birja himoyasini qayta joylashtirish bilan) */
+async function applyNewStopLoss(
+  trade: {
+    id: string; symbol: string; direction: string; quantity: number;
+    marketType: string; executionMode: string; ocoOrderListId: string | null;
+    takeProfitPrice: number | null; stopLossPrice: number | null;
+    brokerAccount: RealAccountRow | null;
+  },
+  newStopLoss: number
+): Promise<boolean> {
+  const isBuy = trade.direction === "BUY";
+  const tp = trade.takeProfitPrice!;
+
+  // SIMULATED yoki birja himoyasisiz real savdo — faqat DB yangilanadi
+  if (trade.marketType === "SPOT" && (trade.executionMode === "SIMULATED" || !trade.ocoOrderListId)) {
+    await prisma.trade.update({
+      where: { id: trade.id },
+      data: { stopLossPrice: newStopLoss, breakEvenApplied: true },
+    });
+    return true;
+  }
+
+  if (!trade.brokerAccount) return false;
+
+  let creds: ExchangeCredentials;
+  try {
+    creds = decryptCredentials(trade.brokerAccount);
+  } catch {
+    return false;
+  }
+
+  // FUTURES: eski himoyani bekor qilib, yangi SL bilan qayta joylashtirish
+  if (trade.marketType === "FUTURES") {
+    try {
+      const filters = await futuresGetFilters(trade.symbol);
+      await futuresCancelAllOrders(creds, trade.symbol);
+      const protection = await futuresPlaceProtection(
+        creds,
+        trade.symbol,
+        isBuy ? "BUY" : "SELL",
+        floorToStep(tp, filters.tickSize),
+        floorToStep(newStopLoss, filters.tickSize)
+      );
+      await prisma.trade.update({
+        where: { id: trade.id },
+        data: {
+          stopLossPrice: newStopLoss,
+          breakEvenApplied: true,
+          ocoOrderListId: `F:${protection.tpOrderId}:${protection.slOrderId}`,
+        },
+      });
+      return true;
+    } catch (err) {
+      console.error(`[AI Engine] Trade ${trade.id}: futures himoyani ko'chirishda xato:`, err instanceof Error ? err.message : err);
+      // Eski darajalar bilan qayta joylashtirishga urinish — pozitsiya himoyasiz qolmasin
+      try {
+        const filters = await futuresGetFilters(trade.symbol);
+        await futuresPlaceProtection(
+          creds, trade.symbol, isBuy ? "BUY" : "SELL",
+          floorToStep(tp, filters.tickSize),
+          floorToStep(trade.stopLossPrice!, filters.tickSize)
+        );
+      } catch (err2) {
+        console.error(`[AI Engine] KRITIK: trade ${trade.id} futures pozitsiyasi himoyasiz qoldi:`, err2 instanceof Error ? err2.message : err2);
+        await prisma.trade.update({ where: { id: trade.id }, data: { ocoOrderListId: null } });
+      }
+      return false;
+    }
+  }
+
+  // SPOT OCO: bekor qilib, yangi SL bilan qayta joylashtirish
+  const adapter = getExchangeAdapter(trade.brokerAccount.exchange);
+  if (!adapter?.cancelProtectiveOrders || !adapter.placeProtectiveOrders || !trade.ocoOrderListId) return false;
+
+  try {
+    const cancelResult = await adapter.cancelProtectiveOrders(creds, trade.symbol, trade.ocoOrderListId);
+    if (cancelResult === "already_done") return false; // sync bosqichi yopadi
+
+    const oco = await adapter.placeProtectiveOrders(creds, trade.symbol, trade.quantity, tp, newStopLoss);
+    await prisma.trade.update({
+      where: { id: trade.id },
+      data: { stopLossPrice: newStopLoss, breakEvenApplied: true, ocoOrderListId: oco.listId },
+    });
+    return true;
+  } catch (err) {
+    console.error(`[AI Engine] Trade ${trade.id}: OCO'ni ko'chirishda xato:`, err instanceof Error ? err.message : err);
+    // OCO bekor qilingan, yangisi joylashmagan bo'lishi mumkin — server kuzatuviga o'tkazamiz
+    await prisma.trade.update({ where: { id: trade.id }, data: { ocoOrderListId: null, stopLossPrice: newStopLoss, breakEvenApplied: true } });
+    return true;
+  }
+}
+
 function isRealExchangeTrade(trade: { executionMode: string; brokerAccount: { exchange: string; isConnected: boolean } | null }): boolean {
   return (
     trade.executionMode !== "SIMULATED" &&
@@ -265,13 +536,11 @@ async function closeSimulatedTrade(
     });
   }
 
-  await prisma.notification.create({
-    data: {
-      userId: trade.userId,
-      title: pnlUsd >= 0 ? "AI savdosi foyda bilan yopildi" : "AI savdosi zarar bilan yopildi",
-      message: `${trade.symbol} ${trade.direction} savdosi yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$`,
-    },
-  });
+  await notifyUser(
+    trade.userId,
+    pnlUsd >= 0 ? "AI savdosi foyda bilan yopildi" : "AI savdosi zarar bilan yopildi",
+    `${trade.symbol} ${trade.direction} savdosi yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$`
+  );
 }
 
 interface RealTradeRow {
@@ -323,13 +592,11 @@ export async function recordRealTradeClose(
   await syncExchangeAccountBalance(adapter, account.id, creds);
 
   const modeLabel = exchangeMode() === "live" ? "REAL" : "TESTNET/sinov";
-  await prisma.notification.create({
-    data: {
-      userId: trade.userId,
-      title: pnlUsd >= 0 ? "Haqiqiy savdo foyda bilan yopildi" : "Haqiqiy savdo zarar bilan yopildi",
-      message: `${trade.symbol} ${trade.direction} (${modeLabel}, ${adapter.id}) savdosi yopildi — ${closeReason}. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$ (komissiya hisobga olingan)`,
-    },
-  });
+  await notifyUser(
+    trade.userId,
+    pnlUsd >= 0 ? "Haqiqiy savdo foyda bilan yopildi" : "Haqiqiy savdo zarar bilan yopildi",
+    `${trade.symbol} ${trade.direction} (${modeLabel}, ${adapter.id}) savdosi yopildi — ${closeReason}. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$ (komissiya hisobga olingan)`
+  );
 
   return { exitPrice, pnlUsd };
 }
@@ -391,12 +658,78 @@ async function closeRealExchangeTrade(
   }
 }
 
+/**
+ * Futures savdosini yopish va natijani yozish (signal yopilishi, qo'lda
+ * yopish yoki TP/SL darajasi uchun umumiy yo'l). Pozitsiya allaqachon birjada
+ * yopilgan bo'lsa, faqat realized natija yoziladi.
+ */
+export async function closeFuturesTradeAndRecord(
+  trade: { id: string; userId: string; symbol: string; direction: string; entryPrice: number; quantity: number; openedAt: Date },
+  account: RealAccountRow,
+  closeReason: string
+): Promise<{ exitPrice: number; pnlUsd: number } | null> {
+  let creds: ExchangeCredentials;
+  try {
+    creds = decryptCredentials(account);
+  } catch (err) {
+    console.error(`[AI Engine] Hisob ${account.id} kalitlarini ochib bo'lmadi:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+
+  try {
+    // Avval himoya buyurtmalarini tozalash — yopish paytida TP/SL ishlab
+    // qo'shimcha pozitsiya ochilmasligi uchun
+    try {
+      await futuresCancelAllOrders(creds, trade.symbol);
+    } catch {
+      // ochiq buyurtma bo'lmasligi mumkin
+    }
+
+    const amt = await futuresPositionAmt(creds, trade.symbol);
+    const expectedSign = trade.direction === "BUY" ? 1 : -1;
+    if (Math.abs(amt) > 1e-9 && Math.sign(amt) === expectedSign) {
+      await futuresClosePosition(creds, trade.symbol, trade.direction as "BUY" | "SELL", Math.abs(amt));
+    }
+
+    const realized = await futuresRealizedPnl(creds, trade.symbol, trade.openedAt.getTime() - 1000);
+    const pnlUsd = Number((realized.pnlUsd - realized.feeUsd).toFixed(2));
+    const exitPrice = realized.lastPrice ?? trade.entryPrice;
+
+    await prisma.trade.update({
+      where: { id: trade.id },
+      data: { status: "CLOSED", exitPrice, pnlUsd, feeUsd: realized.feeUsd, closedAt: new Date() },
+    });
+
+    await syncFuturesAccountBalance(account.id, creds);
+
+    await notifyUser(
+      trade.userId,
+      pnlUsd >= 0 ? "Futures savdosi foyda bilan yopildi" : "Futures savdosi zarar bilan yopildi",
+      `${trade.symbol} ${trade.direction === "BUY" ? "LONG" : "SHORT"} pozitsiyasi yopildi — ${closeReason}. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$ (komissiya hisobga olingan)`
+    );
+
+    return { exitPrice, pnlUsd };
+  } catch (err) {
+    console.error(`[AI Engine] Futures trade ${trade.id} yopishda xato:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 async function syncExchangeAccountBalance(adapter: ExchangeAdapter, accountId: string, creds: ExchangeCredentials) {
   try {
     const usdtBalance = await adapter.fetchQuoteBalance(creds);
     await prisma.brokerAccount.update({ where: { id: accountId }, data: { balanceUsd: usdtBalance } });
   } catch (err) {
     console.error(`[AI Engine] Hisob ${accountId} balansini sinxronlashda xato:`, err instanceof Error ? err.message : err);
+  }
+}
+
+async function syncFuturesAccountBalance(accountId: string, creds: ExchangeCredentials) {
+  try {
+    const total = await futuresTotalUsdt(creds);
+    await prisma.brokerAccount.update({ where: { id: accountId }, data: { balanceUsd: total } });
+  } catch (err) {
+    console.error(`[AI Engine] Hisob ${accountId} futures balansini sinxronlashda xato:`, err instanceof Error ? err.message : err);
   }
 }
 
@@ -440,7 +773,10 @@ export async function autoExecuteSignal(signal: ExecutableSignal) {
       continue;
     }
 
-    if (isRealExchangeIntegrated(account.exchange) && account.isConnected) {
+    if (account.exchange === "Binance" && account.marketType === "FUTURES") {
+      // Futures: BUY (long) ham, SELL (short) ham bajariladi
+      await openFuturesTrade(account, signal);
+    } else if (isRealExchangeIntegrated(account.exchange) && account.isConnected) {
       await openRealExchangeTrade(account, signal);
     } else {
       await openSimulatedTrade(account, signal);
@@ -484,16 +820,16 @@ async function openSimulatedTrade(
       executedByAi: true,
       status: "OPEN",
       executionMode: "SIMULATED",
+      stopLossPrice: signal.stopLoss,
+      takeProfitPrice: signal.takeProfit,
     },
   });
 
-  await prisma.notification.create({
-    data: {
-      userId: account.userId,
-      title: "AI yangi savdoni avtomatik ochdi",
-      message: `${signal.symbol} bo'yicha ${signal.direction === "BUY" ? "xarid" : "sotish"} pozitsiyasi ochildi (ishonch: ${signal.confidence}%, ~$${positionUsd.toFixed(0)}, risk: balansning ${(profile.riskPerTradeFraction * 100).toFixed(1)}%).`,
-    },
-  });
+  await notifyUser(
+    account.userId,
+    "AI yangi savdoni avtomatik ochdi",
+    `${signal.symbol} bo'yicha ${signal.direction === "BUY" ? "xarid" : "sotish"} pozitsiyasi ochildi (ishonch: ${signal.confidence}%, ~$${positionUsd.toFixed(0)}, risk: balansning ${(profile.riskPerTradeFraction * 100).toFixed(1)}%).`
+  );
 }
 
 async function openRealExchangeTrade(
@@ -507,13 +843,11 @@ async function openRealExchangeTrade(
   }
 
   if (signal.direction !== SignalDirection.BUY) {
-    await prisma.notification.create({
-      data: {
-        userId: account.userId,
-        title: "SELL signali avtomatik bajarilmadi",
-        message: `${signal.symbol} bo'yicha SELL signali paydo bo'ldi, ammo spot hisobda "shortlash" imkonsiz — mablag'ingiz xavfsiz qoldi. Signal sifatida saqlandi.`,
-      },
-    });
+    await notifyUser(
+      account.userId,
+      "SELL signali spot hisobda bajarilmadi",
+      `${signal.symbol} bo'yicha SELL signali paydo bo'ldi, ammo spot hisobda "shortlash" imkonsiz. SELL signallarini ham avtomatik bajarish uchun hisobni FUTURES rejimiga o'tkazing.`
+    );
     return;
   }
 
@@ -522,6 +856,19 @@ async function openRealExchangeTrade(
     creds = decryptCredentials(account);
   } catch (err) {
     console.error(`[AI Engine] Hisob ${account.id} kalitlarini ochib bo'lmadi:`, err instanceof Error ? err.message : err);
+    return;
+  }
+
+  // Kirish hali dolzarbmi? Narx signal yaratilgandan beri qochib ketgan
+  // bo'lsa, eskirgan narxda kirish — yutqazuvchi o'yin
+  let currentPrice = signal.entryPrice;
+  try {
+    currentPrice = await adapter.fetchPrice(signal.symbol);
+  } catch {
+    // narx olinmasa signal narxi bilan davom etamiz
+  }
+  if (!isEntryStillValid(signal.direction, signal.entryPrice, signal.takeProfit, signal.stopLoss, currentPrice)) {
+    console.log(`[AI Engine] Hisob ${account.id}: ${signal.symbol} kirish eskirgan (signal: ${signal.entryPrice}, joriy: ${currentPrice}) — savdo ochilmadi`);
     return;
   }
 
@@ -583,6 +930,8 @@ async function openRealExchangeTrade(
         executionMode: exchangeMode() === "live" ? "LIVE" : "TESTNET",
         externalOrderId: order.orderId,
         ocoOrderListId,
+        stopLossPrice: signal.stopLoss,
+        takeProfitPrice: signal.takeProfit,
       },
     });
 
@@ -591,22 +940,153 @@ async function openRealExchangeTrade(
     const protectionNote = ocoOrderListId
       ? "TP/SL birja tomonida o'rnatildi (OCO)."
       : "TP/SL server tomonida kuzatiladi.";
-    await prisma.notification.create({
-      data: {
-        userId: account.userId,
-        title: "AI haqiqiy buyurtma joylashtirdi",
-        message: `${signal.symbol} bo'yicha ${modeLabel} (${adapter.id}) bozor buyurtmasi bajarildi: ${executedQty} dona, ~$${fillPrice} narxda (ishonch: ${signal.confidence}%). ${protectionNote}`,
-      },
-    });
+    await notifyUser(
+      account.userId,
+      "AI haqiqiy buyurtma joylashtirdi",
+      `${signal.symbol} bo'yicha ${modeLabel} (${adapter.id}) bozor buyurtmasi bajarildi: ${executedQty} dona, ~$${fillPrice} narxda (ishonch: ${signal.confidence}%). ${protectionNote}`
+    );
   } catch (err) {
     console.error(`[AI Engine] ${adapter.id} ochish buyurtmasi xato (account ${account.id}):`, err instanceof Error ? err.message : err);
-    await prisma.notification.create({
+    await notifyUser(
+      account.userId,
+      "AI buyurtmasi bajarilmadi",
+      `${signal.symbol} bo'yicha avtomatik buyurtma bajarilmadi (API kalit, ruxsat yoki balans bilan bog'liq xatolik). Hisobingiz sozlamalarini tekshiring.`
+    );
+  }
+}
+
+/**
+ * Binance USDT-M Futures'da pozitsiya ochish: BUY = long, SELL = short.
+ * Har pozitsiyaga darhol birja tomonida TP/SL (closePosition) qo'yiladi;
+ * himoya joylashmasa pozitsiya DARHOL yopiladi — himoyasiz pozitsiya yo'q.
+ */
+async function openFuturesTrade(
+  account: { id: string; userId: string; balanceUsd: number; riskLevel: number; exchange: string; apiKeyEncrypted: string; apiSecretEncrypted: string; passphraseEncrypted: string | null },
+  signal: ExecutableSignal
+) {
+  let creds: ExchangeCredentials;
+  try {
+    creds = decryptCredentials(account);
+  } catch (err) {
+    console.error(`[AI Engine] Hisob ${account.id} kalitlarini ochib bo'lmadi:`, err instanceof Error ? err.message : err);
+    return;
+  }
+
+  // Kirish dolzarbligini tekshirish
+  let currentPrice = signal.entryPrice;
+  try {
+    currentPrice = await fetchSpotPrice(signal.symbol);
+  } catch {
+    // narx olinmasa signal narxi bilan davom etamiz
+  }
+  if (!isEntryStillValid(signal.direction, signal.entryPrice, signal.takeProfit, signal.stopLoss, currentPrice)) {
+    console.log(`[AI Engine] Hisob ${account.id}: ${signal.symbol} futures kirish eskirgan — savdo ochilmadi`);
+    return;
+  }
+
+  const profile = getRiskProfile(account.riskLevel);
+
+  try {
+    const availableMargin = await futuresAvailableUsdt(creds);
+    const equity = await futuresTotalUsdt(creds).catch(() => availableMargin);
+
+    // Notional sig'im = erkin marja × leverage; risk baribir SL masofasidan
+    const positionUsd = computePositionSizeUsd({
+      balanceUsd: equity,
+      availableUsd: availableMargin * env.futuresLeverage,
+      entryPrice: currentPrice,
+      stopLoss: signal.stopLoss,
+      riskPerTradeFraction: profile.riskPerTradeFraction,
+    });
+
+    if (positionUsd <= 0) {
+      console.log(`[AI Engine] Hisob ${account.id}: futures pozitsiya o'lchami yetarli emas (marja: $${availableMargin.toFixed(2)})`);
+      return;
+    }
+
+    const filters = await futuresGetFilters(signal.symbol);
+    const quantity = floorToStep(positionUsd / currentPrice, filters.stepSize);
+    if (quantity <= 0 || quantity * currentPrice < filters.minNotional) {
+      console.log(`[AI Engine] Hisob ${account.id}: futures miqdor minNotional'dan kichik`);
+      return;
+    }
+
+    try {
+      await futuresSetLeverage(creds, signal.symbol, env.futuresLeverage);
+    } catch (err) {
+      console.warn(`[AI Engine] Leverage o'rnatishda ogohlantirish:`, err instanceof Error ? err.message : err);
+    }
+
+    const order = await futuresOpenPosition(creds, signal.symbol, signal.direction as "BUY" | "SELL", quantity);
+    const fillPrice = order.avgPrice ?? currentPrice;
+    const executedQty = order.executedQty > 0 ? order.executedQty : quantity;
+
+    // Himoya: TP/SL birja tomonida. Joylashmasa — pozitsiya darhol yopiladi.
+    let protectionId: string;
+    try {
+      const protection = await futuresPlaceProtection(
+        creds,
+        signal.symbol,
+        signal.direction as "BUY" | "SELL",
+        floorToStep(signal.takeProfit, filters.tickSize),
+        floorToStep(signal.stopLoss, filters.tickSize)
+      );
+      protectionId = `F:${protection.tpOrderId}:${protection.slOrderId}`;
+    } catch (err) {
+      console.error(`[AI Engine] KRITIK: futures himoya joylashmadi — pozitsiya darhol yopiladi:`, err instanceof Error ? err.message : err);
+      try {
+        await futuresClosePosition(creds, signal.symbol, signal.direction as "BUY" | "SELL", executedQty);
+        await notifyUser(
+          account.userId,
+          "Futures pozitsiyasi bekor qilindi",
+          `${signal.symbol} pozitsiyasi ochildi, ammo TP/SL himoyasi o'rnatilmadi — xavfsizlik uchun pozitsiya darhol yopildi. Mablag'ingiz himoyasiz qolmadi.`
+        );
+      } catch (closeErr) {
+        console.error(`[AI Engine] KRITIK: himoyasiz pozitsiyani yopib bo'lmadi:`, closeErr instanceof Error ? closeErr.message : closeErr);
+        await notifyUser(
+          account.userId,
+          "DIQQAT: himoyasiz futures pozitsiyasi",
+          `${signal.symbol} pozitsiyasi ochildi, ammo TP/SL o'rnatilmadi va avtomatik yopish ham muvaffaqiyatsiz. Binance'ga kirib pozitsiyani qo'lda tekshiring!`
+        );
+      }
+      return;
+    }
+
+    const modeLabel = exchangeMode() === "live" ? "REAL" : "TESTNET (sinov)";
+    await prisma.trade.create({
       data: {
         userId: account.userId,
-        title: "AI buyurtmasi bajarilmadi",
-        message: `${signal.symbol} bo'yicha avtomatik buyurtma bajarilmadi (API kalit, ruxsat yoki balans bilan bog'liq xatolik). Hisobingiz sozlamalarini tekshiring.`,
+        brokerAccountId: account.id,
+        signalId: signal.id,
+        symbol: signal.symbol,
+        direction: signal.direction,
+        entryPrice: fillPrice,
+        quantity: executedQty,
+        executedByAi: true,
+        status: "OPEN",
+        executionMode: exchangeMode() === "live" ? "LIVE" : "TESTNET",
+        marketType: "FUTURES",
+        externalOrderId: order.orderId,
+        ocoOrderListId: protectionId,
+        stopLossPrice: signal.stopLoss,
+        takeProfitPrice: signal.takeProfit,
       },
     });
+
+    await syncFuturesAccountBalance(account.id, creds);
+
+    await notifyUser(
+      account.userId,
+      `AI futures pozitsiyasi ochdi: ${signal.direction === "BUY" ? "LONG" : "SHORT"}`,
+      `${signal.symbol} ${modeLabel} futures: ${executedQty} dona, ~$${fillPrice} narxda, ${env.futuresLeverage}x leverage (ishonch: ${signal.confidence}%). TP/SL birja tomonida o'rnatildi.`
+    );
+  } catch (err) {
+    console.error(`[AI Engine] Futures ochish xatosi (account ${account.id}):`, err instanceof Error ? err.message : err);
+    await notifyUser(
+      account.userId,
+      "AI futures buyurtmasi bajarilmadi",
+      `${signal.symbol} bo'yicha futures buyurtma bajarilmadi. API kalitda futures ruxsati borligini va balansni tekshiring.`
+    );
   }
 }
 
