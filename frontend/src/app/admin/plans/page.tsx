@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest, ApiError } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface PlanDto {
   id: string;
@@ -18,6 +20,7 @@ interface PlanDto {
 }
 
 export default function AdminPlansPage() {
+  const { t } = useTranslation();
   const { token } = useAuth();
   const [plans, setPlans] = useState<PlanDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,15 +41,15 @@ export default function AdminPlansPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Tarif rejalarini boshqarish</h1>
+        <h1 className="text-2xl font-bold">{t("admin.plans.title")}</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Narxlar, kechikish va imkoniyatlarni o'zgartiring — o'zgarishlar darhol foydalanuvchilar uchun qo'llaniladi.
+          {t("admin.plans.subtitle")}
         </p>
       </div>
 
       {error && <p className="rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</p>}
       {message && <p className="rounded-lg bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{message}</p>}
-      {loading && <p className="text-sm text-slate-400">Yuklanmoqda...</p>}
+      {loading && <p className="text-sm text-slate-400">{t("common.loading")}</p>}
 
       <div className="grid gap-5 lg:grid-cols-2">
         {plans.map((plan) => (
@@ -55,7 +58,7 @@ export default function AdminPlansPage() {
             plan={plan}
             token={token}
             onSaved={() => {
-              setMessage(`"${plan.name}" tarifi muvaffaqiyatli yangilandi.`);
+              setMessage(t("admin.plans.savedMessage", { name: plan.name }));
               load();
             }}
             onError={(msg) => setError(msg)}
@@ -77,6 +80,7 @@ function PlanEditor({
   onSaved: () => void;
   onError: (msg: string) => void;
 }) {
+  const { t } = useTranslation();
   const [price, setPrice] = useState(plan.priceMonthlyUsd);
   const [delay, setDelay] = useState(plan.signalDelayMin);
   const [maxAccounts, setMaxAccounts] = useState(plan.maxBrokerAccounts);
@@ -101,7 +105,7 @@ function PlanEditor({
       });
       onSaved();
     } catch (err) {
-      onError(err instanceof ApiError ? err.message : "Saqlashda xatolik yuz berdi");
+      onError(err instanceof ApiError ? err.message : t("admin.plans.error"));
     } finally {
       setSaving(false);
     }
@@ -110,13 +114,13 @@ function PlanEditor({
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold">{plan.name}</h2>
+        <h2 className="text-lg font-bold">{t(`plan.${plan.type}` as TranslationKey)}</h2>
         <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-semibold">{plan.type}</span>
       </div>
       <p className="mt-1 text-sm text-slate-400">{plan.description}</p>
 
       <div className="mt-5 grid grid-cols-2 gap-3">
-        <Field label="Oylik narx ($)">
+        <Field label={t("admin.plans.priceLabel")}>
           <input
             type="number"
             min={0}
@@ -125,7 +129,7 @@ function PlanEditor({
             className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-emerald-400"
           />
         </Field>
-        <Field label="Signal kechikishi (daqiqa)">
+        <Field label={t("admin.plans.delayLabel")}>
           <input
             type="number"
             min={0}
@@ -134,7 +138,7 @@ function PlanEditor({
             className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-emerald-400"
           />
         </Field>
-        <Field label="Maks. broker hisoblari">
+        <Field label={t("admin.plans.maxAccountsLabel")}>
           <input
             type="number"
             min={1}
@@ -143,7 +147,7 @@ function PlanEditor({
             className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-emerald-400"
           />
         </Field>
-        <Field label="To'liq avto-treding">
+        <Field label={t("admin.plans.autoTradeLabel")}>
           <button
             type="button"
             onClick={() => setAutoTrade((v) => !v)}
@@ -151,12 +155,12 @@ function PlanEditor({
               autoTrade ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40" : "bg-white/5 text-slate-300"
             }`}
           >
-            {autoTrade ? "Yoqilgan" : "O'chirilgan"}
+            {autoTrade ? t("admin.plans.enabled") : t("admin.plans.disabled")}
           </button>
         </Field>
       </div>
 
-      <Field label="Imkoniyatlar (har bir qator alohida xususiyat)">
+      <Field label={t("admin.plans.featuresLabel")}>
         <textarea
           value={features}
           onChange={(e) => setFeatures(e.target.value)}
@@ -170,7 +174,7 @@ function PlanEditor({
         disabled={saving}
         className="mt-4 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
       >
-        {saving ? "Saqlanmoqda..." : "Saqlash"}
+        {saving ? t("common.saving") : t("common.save")}
       </button>
     </div>
   );

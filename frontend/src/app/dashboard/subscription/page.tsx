@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest, ApiError } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface PlanDto {
   id: string;
@@ -31,12 +33,99 @@ const PLAN_STYLES: Record<string, string> = {
   VIP: "border-amber-400/40 bg-amber-400/[0.07]",
 };
 
+type PaymentMethodCode = "HUMO" | "UZCARD" | "VISA" | "MASTERCARD" | "CLICK";
+
+const METHOD_ICONS: Record<PaymentMethodCode, string> = {
+  HUMO: "🟢",
+  UZCARD: "🔵",
+  VISA: "💳",
+  MASTERCARD: "💳",
+  CLICK: "⚡",
+};
+
+function PaymentModal({
+  plan,
+  onClose,
+  onSubmit,
+  submitting,
+}: {
+  plan: PlanDto;
+  onClose: () => void;
+  onSubmit: (method: PaymentMethodCode) => void;
+  submitting: boolean;
+}) {
+  const { t } = useTranslation();
+  const [method, setMethod] = useState<PaymentMethodCode | null>(null);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-lg font-bold">{t("dash.subscription.payModalTitle")}</h3>
+            <p className="mt-1 text-sm text-slate-400">{t("dash.subscription.payModalSubtitle")}</p>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1 text-slate-400 hover:bg-white/5 hover:text-white">
+            ✕
+          </button>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+          <span className="text-slate-400">
+            {t("dash.subscription.payPlanLabel")}: <span className="font-semibold text-white">{plan.name}</span>
+          </span>
+          <span className="text-slate-400">
+            {t("dash.subscription.payAmountLabel")}: <span className="font-semibold text-emerald-400">${plan.priceMonthlyUsd}</span>
+          </span>
+        </div>
+
+        <div className="mt-5">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">{t("payment.selectMethod")}</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {(["HUMO", "UZCARD", "VISA", "MASTERCARD", "CLICK"] as PaymentMethodCode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMethod(m)}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition ${
+                  method === m
+                    ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300"
+                    : "border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/5"
+                }`}
+              >
+                <span>{METHOD_ICONS[m]}</span>
+                <span>{t(`payment.method.${m}` as TranslationKey)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <p className="mt-4 text-xs text-slate-500">
+          {t("payment.secureNotice")}
+        </p>
+
+        <button
+          disabled={!method || submitting}
+          onClick={() => method && onSubmit(method)}
+          className="mt-6 w-full rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-400"
+        >
+          {submitting ? t("dash.subscription.payProcessing") : t("dash.subscription.payConfirm")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SubscriptionPage() {
   const { token, user, refreshUser } = useAuth();
+  const { t, locale } = useTranslation();
   const [plans, setPlans] = useState<PlanDto[]>([]);
   const [payments, setPayments] = useState<PaymentDto[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pendingPlan, setPendingPlan] = useState<string | null>(null);
+  const [modalPlan, setModalPlan] = useState<PlanDto | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,42 +145,55 @@ export default function SubscriptionPage() {
 
   useEffect(load, [token]);
 
-  async function handleSubscribe(plan: PlanDto) {
-    if (!token || plan.type === "FREE") return;
+  async function handleSubscribe(method: PaymentMethodCode) {
+    if (!token || !modalPlan) return;
     setError(null);
     setMessage(null);
-    setPendingPlan(plan.type);
+    setSubmitting(true);
     try {
-      const res = await apiRequest<{ message: string }>("/payments/subscribe", {
+      const res = await apiRequest<{
+        message: string;
+        paymentInfo?: { provider: string; checkoutUrl?: string; returnUrl?: string };
+      }>("/payments/subscribe", {
         method: "POST",
         token,
-        body: { plan: plan.type, method: "card" },
+        body: { plan: modalPlan.type, method },
       });
-      setMessage(res.message);
+
+      // Agar backend to'lov provayderiga yo'naltirish ma'lumotini qaytarsa —
+      // foydalanuvchini provayder sahifasiga o'tkazamiz
+      if (res.paymentInfo?.checkoutUrl) {
+        window.location.href = res.paymentInfo.checkoutUrl;
+        return;
+      }
+
+      // Sinov rejimi yoki darhol tasdiqlangan to'lov
+      setMessage(t("dash.subscription.paySuccess", { plan: modalPlan.name, method: t(`payment.method.${method}` as TranslationKey) }));
+      setModalPlan(null);
       await refreshUser();
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Obunani amalga oshirishda xatolik yuz berdi");
+      setError(err instanceof ApiError ? err.message : t("dash.subscription.payError"));
     } finally {
-      setPendingPlan(null);
+      setSubmitting(false);
     }
   }
 
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold">Tarif va obuna</h1>
+        <h1 className="text-2xl font-bold">{t("dash.subscription.title")}</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Joriy tarifingiz: <span className="font-semibold text-emerald-400">{user?.plan}</span>
+          {t("dash.subscription.currentPlan")} <span className="font-semibold text-emerald-400">{t(`plan.${user?.plan}` as TranslationKey)}</span>
           {user?.planExpiresAt && (
-            <> — amal qilish muddati: {new Date(user.planExpiresAt).toLocaleDateString("uz-UZ")}</>
+            <> — {t("dash.subscription.expiresOn", { date: new Date(user.planExpiresAt).toLocaleDateString(locale) })}</>
           )}
         </p>
       </div>
 
       {message && <p className="rounded-lg bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{message}</p>}
       {error && <p className="rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</p>}
-      {loading && <p className="text-sm text-slate-400">Yuklanmoqda...</p>}
+      {loading && <p className="text-sm text-slate-400">{t("common.loading")}</p>}
 
       <div className="grid gap-5 lg:grid-cols-4">
         {plans.map((plan) => {
@@ -100,12 +202,12 @@ export default function SubscriptionPage() {
             <div key={plan.id} className={`flex flex-col rounded-2xl border p-6 ${PLAN_STYLES[plan.type]}`}>
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-bold">{plan.name}</h3>
-                {isCurrent && <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-semibold">Joriy tarif</span>}
+                {isCurrent && <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-semibold">{t("dash.subscription.currentBadge")}</span>}
               </div>
               <p className="mt-1 text-sm text-slate-400">{plan.description}</p>
               <p className="mt-4 text-2xl font-bold">
                 ${plan.priceMonthlyUsd}
-                <span className="text-sm font-normal text-slate-400"> / oyiga</span>
+                <span className="text-sm font-normal text-slate-400"> {t("plan.perMonth")}</span>
               </p>
               <ul className="mt-5 flex-1 space-y-2 text-sm text-slate-300">
                 {plan.features.map((f) => (
@@ -116,11 +218,11 @@ export default function SubscriptionPage() {
                 ))}
               </ul>
               <button
-                disabled={isCurrent || plan.type === "FREE" || pendingPlan === plan.type}
-                onClick={() => handleSubscribe(plan)}
+                disabled={isCurrent || plan.type === "FREE"}
+                onClick={() => setModalPlan(plan)}
                 className="mt-6 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-400"
               >
-                {isCurrent ? "Joriy tarif" : pendingPlan === plan.type ? "Faollashtirilmoqda..." : plan.type === "FREE" ? "Bepul tarif" : "Faollashtirish"}
+                {isCurrent ? t("dash.subscription.currentBadge") : plan.type === "FREE" ? t("dash.subscription.freePlanLabel") : t("dash.subscription.activate")}
               </button>
             </div>
           );
@@ -128,41 +230,45 @@ export default function SubscriptionPage() {
       </div>
 
       <div>
-        <h2 className="text-lg font-semibold">To'lovlar tarixi</h2>
+        <h2 className="text-lg font-semibold">{t("dash.subscription.history")}</h2>
         <div className="mt-4 overflow-x-auto rounded-2xl border border-white/10">
           <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-white/5 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
-                <th className="px-4 py-3">Tarif</th>
-                <th className="px-4 py-3">Summa</th>
-                <th className="px-4 py-3">Usul</th>
-                <th className="px-4 py-3">Holat</th>
-                <th className="px-4 py-3">Davr</th>
-                <th className="px-4 py-3">Sana</th>
+                <th className="px-4 py-3">{t("dash.subscription.colPlan")}</th>
+                <th className="px-4 py-3">{t("dash.subscription.colAmount")}</th>
+                <th className="px-4 py-3">{t("dash.subscription.colMethod")}</th>
+                <th className="px-4 py-3">{t("dash.subscription.colStatus")}</th>
+                <th className="px-4 py-3">{t("dash.subscription.colPeriod")}</th>
+                <th className="px-4 py-3">{t("dash.subscription.colDate")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {payments.map((p) => (
                 <tr key={p.id}>
-                  <td className="px-4 py-3 font-medium">{p.plan}</td>
+                  <td className="px-4 py-3 font-medium">{t(`plan.${p.plan}` as TranslationKey)}</td>
                   <td className="px-4 py-3">${p.amountUsd}</td>
-                  <td className="px-4 py-3 text-slate-400">{p.method}</td>
+                  <td className="px-4 py-3 text-slate-400">{t(`payment.method.${p.method}` as TranslationKey)}</td>
                   <td className="px-4 py-3">
                     <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">{p.status}</span>
                   </td>
                   <td className="px-4 py-3 text-slate-400">
-                    {new Date(p.periodStart).toLocaleDateString("uz-UZ")} — {new Date(p.periodEnd).toLocaleDateString("uz-UZ")}
+                    {new Date(p.periodStart).toLocaleDateString(locale)} — {new Date(p.periodEnd).toLocaleDateString(locale)}
                   </td>
-                  <td className="px-4 py-3 text-slate-500">{new Date(p.createdAt).toLocaleString("uz-UZ")}</td>
+                  <td className="px-4 py-3 text-slate-500">{new Date(p.createdAt).toLocaleString(locale)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {!loading && payments.length === 0 && (
-            <p className="px-4 py-10 text-center text-sm text-slate-500">Hozircha to'lovlar mavjud emas.</p>
+            <p className="px-4 py-10 text-center text-sm text-slate-500">{t("dash.subscription.empty")}</p>
           )}
         </div>
       </div>
+
+      {modalPlan && (
+        <PaymentModal plan={modalPlan} onClose={() => setModalPlan(null)} onSubmit={handleSubscribe} submitting={submitting} />
+      )}
     </div>
   );
 }

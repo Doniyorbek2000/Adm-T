@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Response } from "express";
 import { z } from "zod";
 import { prisma } from "../utils/prisma";
@@ -5,6 +6,8 @@ import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { encryptSecret, maskSecret } from "../utils/crypto";
 import { PLAN_LIMITS } from "../services/planLimits";
+import { ExchangeApiError, getExchangeAdapter } from "../services/exchanges/registry";
+import { exchangeMode } from "../services/exchanges/binance";
 
 /**
  * Hisob ulash logikasi:
@@ -20,8 +23,10 @@ import { PLAN_LIMITS } from "../services/planLimits";
 const connectSchema = z.object({
   exchange: z.string().min(2),
   label: z.string().optional(),
-  apiKey: z.string().min(4),
-  apiSecret: z.string().min(4),
+  apiKey: z.string().min(4), // MT5 uchun: hisob login raqami
+  apiSecret: z.string().min(4), // MT5 uchun: hisob paroli
+  passphrase: z.string().min(1).optional(), // faqat OKX/KuCoin uchun: API passphrase (maxfiy ibora)
+  server: z.string().min(2).optional(), // faqat MT5 uchun: broker server nomi
   mode: z.enum(["SIGNAL_ONLY", "AUTO_TRADE"]).default("SIGNAL_ONLY"),
   riskLevel: z.number().int().min(1).max(3).default(2),
 });
@@ -39,6 +44,7 @@ function serialize(account: any) {
     exchange: account.exchange,
     label: account.label,
     apiKeyMasked: maskSecret(account.apiKeyEncrypted ? account.exchange : ""), // placeholder, real masked value set below
+    server: account.server ?? null,
     isConnected: account.isConnected,
     mode: account.mode,
     riskLevel: account.riskLevel,
@@ -74,16 +80,61 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
     );
   }
 
+  // Real integratsiya qilingan birjalar (Binance/Bybit/OKX/KuCoin/BingX) uchun
+  // API kalitlarini HAQIQIY birjada tekshiramiz va boshlang'ich balansni
+  // birjadan olamiz - bu (1) noto'g'ri/yaroqsiz kalitlarni darhol aniqlaydi
+  // (xavfsizlik), (2) foydalanuvchiga soxta emas, balki haqiqiy balansni
+  // ko'rsatadi. Hali integratsiya qilinmagan birjalar (MT5, boshqalar) uchun
+  // virtual boshlang'ich balans bilan davom etiladi.
+  const adapter = getExchangeAdapter(data.exchange);
+  let initialBalance = 1000;
+  let connectionNotice = "";
+
+  if (adapter) {
+    if (adapter.requiresPassphrase && !data.passphrase) {
+      throw new AppError(`${adapter.id} hisobini ulash uchun API passphrase (maxfiy ibora) ham kiritilishi shart.`, 400);
+    }
+
+    try {
+      initialBalance = await adapter.fetchQuoteBalance({ apiKey: data.apiKey, apiSecret: data.apiSecret, passphrase: data.passphrase });
+      connectionNotice =
+        exchangeMode() === "live"
+          ? ` Hisobingiz ${adapter.id}'ning HAQIQIY (live) muhitiga ulandi - AI sizning real mablag'ingiz bilan ishlaydi.`
+          : ` Hisobingiz hozircha ${adapter.id} TESTNET/sinov muhitiga ulangan - AI sun'iy test mablag'i bilan ishlaydi, real pulingizga hech qanday ta'sir qilmaydi.`;
+    } catch (err) {
+      if (err instanceof ExchangeApiError && err.providerCode !== undefined) {
+        // Birja o'zi aniq xato kodi bilan rad etdi - bu haqiqatan ham kalit/ruxsat muammosi
+        throw new AppError(
+          `${adapter.id} API kalit ma'lumotlarini tasdiqlab bo'lmadi: ${err.message}. Iltimos kalit, maxfiy so'z${adapter.requiresPassphrase ? ", passphrase" : ""} va savdo ruxsatlari (Spot Trading) to'g'ri sozlanganini tekshiring.`,
+          400
+        );
+      }
+      // Aniq xato kodisiz javob - tarmoq, hosting provayder yoki mintaqaviy
+      // bloklash bo'lishi mumkin, shuning uchun foydalanuvchini chalkashtirmaslik
+      // uchun umumiyroq xabar beramiz
+      throw new AppError(
+        `${adapter.id} bilan bog'lanib bo'lmadi. Bu serveringiz joylashgan mintaqa/IP ${adapter.id} tomonidan cheklangani yoki birja vaqtinchalik javob bermayotgani sababli bo'lishi mumkin. Internet aloqangizni va kalitlaringizni tekshirib, birozdan so'ng qayta urinib ko'ring.`,
+        502
+      );
+    }
+  }
+
+  // ID'ni oldindan generatsiya qilamiz - shifrlangan qiymatlarni shu yozuvga
+  // "bog'lash" (AAD context) uchun u shifrlashdan oldin ma'lum bo'lishi kerak
+  const accountId = crypto.randomUUID();
   const account = await prisma.brokerAccount.create({
     data: {
+      id: accountId,
       userId: req.user!.id,
       exchange: data.exchange,
-      label: data.label ?? `${data.exchange} hisobi`,
-      apiKeyEncrypted: encryptSecret(data.apiKey),
-      apiSecretEncrypted: encryptSecret(data.apiSecret),
+      label: data.label ?? data.exchange,
+      apiKeyEncrypted: encryptSecret(data.apiKey, `${accountId}:apiKey`),
+      apiSecretEncrypted: encryptSecret(data.apiSecret, `${accountId}:apiSecret`),
+      passphraseEncrypted: data.passphrase ? encryptSecret(data.passphrase, `${accountId}:passphrase`) : undefined,
+      server: data.exchange === "MT5" ? data.server : undefined,
       mode: data.mode,
       riskLevel: data.riskLevel,
-      balanceUsd: 1000, // demo/boshlang'ich virtual balans (real integratsiyada birjadan olinadi)
+      balanceUsd: initialBalance,
     },
   });
 
@@ -93,7 +144,7 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
       title: "Hisob muvaffaqiyatli ulandi",
       message: `${account.exchange} (${account.label}) hisobingiz ulandi. Rejim: ${
         account.mode === "AUTO_TRADE" ? "AI to'liq avtomatik savdo qiladi" : "Faqat AI signallarini olasiz"
-      }.`,
+      }.${connectionNotice}`,
     },
   });
 
@@ -112,13 +163,15 @@ export const createDemoAccount = asyncHandler(async (req: AuthedRequest, res: Re
     return res.json({ account: { ...serialize(existingDemo), apiKeyMasked: "DEMO-MODE" } });
   }
 
+  const demoAccountId = crypto.randomUUID();
   const account = await prisma.brokerAccount.create({
     data: {
+      id: demoAccountId,
       userId: req.user!.id,
       exchange: "Demo",
       label: "Bepul Demo hisob (virtual)",
-      apiKeyEncrypted: encryptSecret("demo"),
-      apiSecretEncrypted: encryptSecret("demo"),
+      apiKeyEncrypted: encryptSecret("demo", `${demoAccountId}:apiKey`),
+      apiSecretEncrypted: encryptSecret("demo", `${demoAccountId}:apiSecret`),
       mode: "SIGNAL_ONLY",
       riskLevel: 2,
       balanceUsd: 10_000,

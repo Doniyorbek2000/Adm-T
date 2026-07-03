@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest, ApiError } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface UserDto {
   id: string;
@@ -19,6 +21,7 @@ const PLANS = ["FREE", "PRO", "ULTRA", "VIP"] as const;
 
 export default function AdminUsersPage() {
   const { token } = useAuth();
+  const { t, locale } = useTranslation();
   const [users, setUsers] = useState<UserDto[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -45,7 +48,7 @@ export default function AdminUsersPage() {
       await apiRequest(`/admin/users/${user.id}`, { method: "PATCH", token, body: { isActive: !user.isActive } });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Xatolik yuz berdi");
+      setError(err instanceof ApiError ? err.message : t("common.error.generic"));
     } finally {
       setBusyId(null);
     }
@@ -59,7 +62,7 @@ export default function AdminUsersPage() {
       await apiRequest(`/admin/users/${user.id}`, { method: "PATCH", token, body: { plan } });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Xatolik yuz berdi");
+      setError(err instanceof ApiError ? err.message : t("common.error.generic"));
     } finally {
       setBusyId(null);
     }
@@ -69,8 +72,8 @@ export default function AdminUsersPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Foydalanuvchilar</h1>
-          <p className="mt-1 text-sm text-slate-400">Tariflarni o'zgartiring, hisoblarni bloklang yoki faollashtiring.</p>
+          <h1 className="text-2xl font-bold">{t("admin.users.title")}</h1>
+          <p className="mt-1 text-sm text-slate-400">{t("admin.users.subtitle")}</p>
         </div>
         <form
           onSubmit={(e) => {
@@ -82,29 +85,29 @@ export default function AdminUsersPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Ism yoki email bo'yicha qidirish..."
+            placeholder={t("admin.users.searchPlaceholder")}
             className="rounded-lg border border-white/10 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-emerald-400"
           />
           <button type="submit" className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">
-            Qidirish
+            {t("common.search")}
           </button>
         </form>
       </div>
 
       {error && <p className="rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</p>}
-      {loading && <p className="text-sm text-slate-400">Yuklanmoqda...</p>}
+      {loading && <p className="text-sm text-slate-400">{t("common.loading")}</p>}
 
       <div className="overflow-x-auto rounded-2xl border border-white/10">
         <table className="w-full min-w-[860px] text-sm">
           <thead className="bg-white/5 text-left text-xs uppercase tracking-wide text-slate-400">
             <tr>
-              <th className="px-4 py-3">Foydalanuvchi</th>
-              <th className="px-4 py-3">Tarif</th>
-              <th className="px-4 py-3">Hisoblar</th>
-              <th className="px-4 py-3">Savdolar</th>
-              <th className="px-4 py-3">Holat</th>
-              <th className="px-4 py-3">Ro'yxatdan o'tgan</th>
-              <th className="px-4 py-3">Amallar</th>
+              <th className="px-4 py-3">{t("admin.users.colUser")}</th>
+              <th className="px-4 py-3">{t("admin.users.colPlan")}</th>
+              <th className="px-4 py-3">{t("admin.users.colAccounts")}</th>
+              <th className="px-4 py-3">{t("admin.users.colTrades")}</th>
+              <th className="px-4 py-3">{t("admin.users.colStatus")}</th>
+              <th className="px-4 py-3">{t("admin.users.colJoined")}</th>
+              <th className="px-4 py-3">{t("admin.users.colActions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -123,7 +126,7 @@ export default function AdminUsersPage() {
                   >
                     {PLANS.map((p) => (
                       <option key={p} value={p}>
-                        {p}
+                        {t(`plan.${p}` as TranslationKey)}
                       </option>
                     ))}
                   </select>
@@ -136,10 +139,10 @@ export default function AdminUsersPage() {
                       u.isActive ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
                     }`}
                   >
-                    {u.isActive ? "Faol" : "Bloklangan"}
+                    {u.isActive ? t("admin.users.active") : t("admin.users.blocked")}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-slate-500">{new Date(u.createdAt).toLocaleDateString("uz-UZ")}</td>
+                <td className="px-4 py-3 text-slate-500">{new Date(u.createdAt).toLocaleDateString(locale)}</td>
                 <td className="px-4 py-3">
                   <button
                     disabled={busyId === u.id}
@@ -148,14 +151,14 @@ export default function AdminUsersPage() {
                       u.isActive ? "bg-rose-500/15 text-rose-300 hover:bg-rose-500/25" : "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
                     }`}
                   >
-                    {u.isActive ? "Bloklash" : "Faollashtirish"}
+                    {u.isActive ? t("admin.users.block") : t("admin.users.activate")}
                   </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {!loading && users.length === 0 && <p className="px-4 py-10 text-center text-sm text-slate-500">Foydalanuvchilar topilmadi.</p>}
+        {!loading && users.length === 0 && <p className="px-4 py-10 text-center text-sm text-slate-500">{t("admin.users.empty")}</p>}
       </div>
     </div>
   );

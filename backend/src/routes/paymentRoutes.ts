@@ -1,8 +1,13 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { myPayments, subscribe } from "../controllers/paymentController";
+import { clickWebhook, myPayments, paymeWebhook, subscribe } from "../controllers/paymentController";
 
 const router = Router();
+
+// Webhook endpointlar — autentifikatsiya talab qilmaydi (to'lov provayderining
+// o'z serverlari chaqiradi, har bir webhook o'z imzo/auth tekshiruviga ega)
+router.post("/webhook/click", clickWebhook as any);
+router.post("/webhook/payme", paymeWebhook as any);
 
 router.use(requireAuth);
 router.post("/subscribe", subscribe);

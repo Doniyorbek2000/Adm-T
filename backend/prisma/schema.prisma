@@ -24,10 +24,11 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  brokerAccounts BrokerAccount[]
-  trades         Trade[]
-  payments       Payment[]
-  notifications  Notification[]
+  brokerAccounts  BrokerAccount[]
+  trades          Trade[]
+  payments        Payment[]
+  notifications   Notification[]
+  supportMessages SupportMessage[]
 }
 
 // Foydalanuvchining birja/broker hisobini ulashi (API kalitlar saqlanadi - shifrlangan)
@@ -35,10 +36,12 @@ model BrokerAccount {
   id                 String   @id @default(cuid())
   userId             String
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  exchange           String // masalan: Binance, Bybit, OKX, Demo
+  exchange           String // masalan: Binance, Bybit, OKX, KuCoin, BingX, MT5, Demo
   label              String   @default("Asosiy hisob")
-  apiKeyEncrypted    String
-  apiSecretEncrypted String
+  apiKeyEncrypted    String // MT5 uchun: hisob login raqami
+  apiSecretEncrypted String // MT5 uchun: hisob paroli
+  passphraseEncrypted String? // faqat OKX/KuCoin uchun: API passphrase (maxfiy ibora), shifrlangan holda
+  server             String? // faqat MT5 uchun: broker server nomi (masalan, Exness-MT5Real)
   isConnected        Boolean  @default(true)
   mode               String   @default("SIGNAL_ONLY") // SIGNAL_ONLY | AUTO_TRADE
   riskLevel          Int      @default(2) // 1 - past, 2 - o'rta, 3 - yuqori
@@ -84,6 +87,8 @@ model Trade {
   pnlUsd          Float?
   status          String         @default("OPEN") // OPEN | CLOSED
   executedByAi    Boolean        @default(true)
+  executionMode   String         @default("SIMULATED") // SIMULATED | TESTNET | LIVE - savdo qanday muhitda bajarilgani
+  externalOrderId String? // ulangan birjadagi haqiqiy buyurtma ID (TESTNET/LIVE uchun, audit va solishtirish maqsadida)
   openedAt        DateTime       @default(now())
   closedAt        DateTime?
 }
@@ -114,6 +119,18 @@ model Payment {
   periodStart DateTime @default(now())
   periodEnd   DateTime
   createdAt   DateTime @default(now())
+}
+
+// Foydalanuvchi va admin o'rtasidagi qo'llab-quvvatlash yozishmalari (har bir
+// foydalanuvchi uchun bitta umumiy "thread" - admin javob yozadi)
+model SupportMessage {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderRole String // USER | ADMIN - xabarni kim yozganini bildiradi
+  body       String
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
 }
 
 // Foydalanuvchiga tizim xabarnomalari (signal, to'lov, tizim yangilanishi va h.k.)

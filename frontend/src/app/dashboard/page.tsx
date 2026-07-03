@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface Summary {
   totalBalance: number;
@@ -21,10 +23,9 @@ interface SignalStats {
   winRate: number;
 }
 
-const PLAN_LABELS: Record<string, string> = { FREE: "Bepul", PRO: "Pro", ULTRA: "Ultra", VIP: "VIP" };
-
 export default function DashboardOverviewPage() {
   const { user, token } = useAuth();
+  const { t } = useTranslation();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [signalStats, setSignalStats] = useState<SignalStats | null>(null);
   const [hasAccount, setHasAccount] = useState<boolean | null>(null);
@@ -59,79 +60,74 @@ export default function DashboardOverviewPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold">Xush kelibsiz, {user.fullName.split(" ")[0]} 👋</h1>
+        <h1 className="text-2xl font-bold">{t("dash.overview.welcome", { name: user.fullName.split(" ")[0] })}</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Joriy tarifingiz: <span className="font-semibold text-emerald-400">{PLAN_LABELS[user.plan]}</span>. AI sizning
-          hisobingiz uchun bozorni 24/7 tahlil qilmoqda.
+          {t("dash.overview.planLine", { plan: t(`plan.${user.plan}` as TranslationKey) })}
         </p>
       </div>
 
       {hasAccount === false && (
         <div className="flex flex-col items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="font-semibold text-amber-300">Sizda hali ulangan hisob yo'q</p>
-            <p className="mt-1 text-sm text-amber-200/80">
-              Broker hisobingizni ulang yoki bepul Demo (virtual $10,000) hisob bilan AI ishlashini hoziroq kuzating.
-            </p>
+            <p className="font-semibold text-amber-300">{t("dash.overview.noAccountTitle")}</p>
+            <p className="mt-1 text-sm text-amber-200/80">{t("dash.overview.noAccountText")}</p>
           </div>
           <Link
             href="/dashboard/accounts"
             className="shrink-0 rounded-lg bg-amber-400 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-amber-300"
           >
-            Hisob ulash →
+            {t("dash.overview.connectAccount")}
           </Link>
         </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Umumiy balans" value={summary ? `$${summary.totalBalance.toLocaleString()}` : "—"} loading={loading} accent="emerald" />
+        <StatCard label={t("dash.overview.totalBalance")} value={summary ? `$${summary.totalBalance.toLocaleString()}` : "—"} loading={loading} accent="emerald" />
         <StatCard
-          label="Realizatsiya qilingan PnL"
+          label={t("dash.overview.realizedPnl")}
           value={summary ? `${summary.realizedPnl >= 0 ? "+" : ""}$${summary.realizedPnl.toLocaleString()}` : "—"}
           loading={loading}
           accent={summary && summary.realizedPnl < 0 ? "rose" : "emerald"}
         />
-        <StatCard label="Ochiq pozitsiyalar" value={summary ? String(summary.openPositions) : "—"} loading={loading} accent="sky" />
-        <StatCard label="G'alaba foizi" value={summary ? `${summary.winRate}%` : "—"} loading={loading} accent="violet" />
+        <StatCard label={t("dash.overview.openPositions")} value={summary ? String(summary.openPositions) : "—"} loading={loading} accent="sky" />
+        <StatCard label={t("dash.overview.winRate")} value={summary ? `${summary.winRate}%` : "—"} loading={loading} accent="violet" />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-          <h2 className="text-lg font-semibold">AI faoliyati statistikasi</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Sun'iy intellekt tomonidan hozirgacha generatsiya qilingan signallar va ularning natijalari.
-          </p>
+          <h2 className="text-lg font-semibold">{t("dash.overview.aiStatsTitle")}</h2>
+          <p className="mt-1 text-sm text-slate-400">{t("dash.overview.aiStatsSubtitle")}</p>
           <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <MiniStat label="Jami signallar" value={signalStats?.total ?? "—"} />
-            <MiniStat label="Faol signallar" value={signalStats?.active ?? "—"} />
-            <MiniStat label="Yopilgan" value={signalStats?.closed ?? "—"} />
-            <MiniStat label="AI g'alaba foizi" value={signalStats ? `${signalStats.winRate}%` : "—"} />
+            <MiniStat label={t("dash.overview.totalSignals")} value={signalStats?.total ?? "—"} />
+            <MiniStat label={t("dash.overview.activeSignalsLabel")} value={signalStats?.active ?? "—"} />
+            <MiniStat label={t("dash.overview.closedLabel")} value={signalStats?.closed ?? "—"} />
+            <MiniStat label={t("dash.overview.aiWinRate")} value={signalStats ? `${signalStats.winRate}%` : "—"} />
           </div>
           <Link href="/dashboard/signals" className="mt-6 inline-flex text-sm font-semibold text-emerald-400 hover:underline">
-            Barcha signallarni ko'rish →
+            {t("dash.overview.viewAllSignals")}
           </Link>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-          <h2 className="text-lg font-semibold">Tezkor amallar</h2>
+          <h2 className="text-lg font-semibold">{t("dash.overview.quickActions")}</h2>
           <div className="mt-4 space-y-3">
             <Link
               href="/dashboard/accounts"
               className="block rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium hover:bg-white/10"
             >
-              🔗 Broker hisobini ulash / Demo ochish
+              {t("dash.overview.actionConnect")}
             </Link>
             <Link
               href="/dashboard/subscription"
               className="block rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium hover:bg-white/10"
             >
-              💳 Tarifni yangilash (Pro / Ultra / VIP)
+              {t("dash.overview.actionUpgrade")}
             </Link>
             <Link
               href="/dashboard/trades"
               className="block rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium hover:bg-white/10"
             >
-              📈 Savdolar tarixini ko'rish
+              {t("dash.overview.actionHistory")}
             </Link>
           </div>
         </div>

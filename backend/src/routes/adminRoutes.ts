@@ -11,6 +11,12 @@ import {
   updatePlan,
   updateUser,
 } from "../controllers/adminController";
+import {
+  getConversation,
+  listConversations,
+  replyToConversation,
+  sendBroadcast,
+} from "../controllers/supportController";
 
 const router = Router();
 
@@ -29,5 +35,11 @@ router.get("/plans", listPlansAdmin);
 router.patch("/plans/:id", updatePlan);
 
 router.get("/trades", listAllTrades);
+
+router.get("/support", listConversations);
+router.get("/support/:userId", getConversation);
+router.post("/support/:userId", replyToConversation);
+
+router.post("/notifications", sendBroadcast);
 
 export default router;

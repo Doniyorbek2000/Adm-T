@@ -4,28 +4,33 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { TranslationKey } from "@/lib/i18n/translations/en";
 
 interface NavItem {
   href: string;
-  label: string;
+  labelKey: TranslationKey;
   icon: string;
 }
 
 const USER_NAV: NavItem[] = [
-  { href: "/dashboard", label: "Umumiy ko'rinish", icon: "📊" },
-  { href: "/dashboard/signals", label: "AI signallari", icon: "📡" },
-  { href: "/dashboard/accounts", label: "Hisoblarim", icon: "🔗" },
-  { href: "/dashboard/trades", label: "Savdolar tarixi", icon: "📈" },
-  { href: "/dashboard/subscription", label: "Tarif / Obuna", icon: "💳" },
-  { href: "/dashboard/notifications", label: "Bildirishnomalar", icon: "🔔" },
+  { href: "/dashboard", labelKey: "sidebar.overview", icon: "📊" },
+  { href: "/dashboard/signals", labelKey: "sidebar.signals", icon: "📡" },
+  { href: "/dashboard/accounts", labelKey: "sidebar.accounts", icon: "🔗" },
+  { href: "/dashboard/trades", labelKey: "sidebar.trades", icon: "📈" },
+  { href: "/dashboard/subscription", labelKey: "sidebar.subscription", icon: "💳" },
+  { href: "/dashboard/notifications", labelKey: "sidebar.notifications", icon: "🔔" },
+  { href: "/dashboard/support", labelKey: "sidebar.support", icon: "💬" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
-  { href: "/admin", label: "Boshqaruv paneli", icon: "🛠️" },
-  { href: "/admin/users", label: "Foydalanuvchilar", icon: "👥" },
-  { href: "/admin/signals", label: "AI signallari", icon: "📡" },
-  { href: "/admin/plans", label: "Tarif rejalari", icon: "💳" },
-  { href: "/admin/trades", label: "Savdolar", icon: "📈" },
+  { href: "/admin", labelKey: "adminSidebar.dashboard", icon: "🛠️" },
+  { href: "/admin/users", labelKey: "adminSidebar.users", icon: "👥" },
+  { href: "/admin/signals", labelKey: "adminSidebar.signals", icon: "📡" },
+  { href: "/admin/plans", labelKey: "adminSidebar.plans", icon: "💳" },
+  { href: "/admin/trades", labelKey: "adminSidebar.trades", icon: "📈" },
+  { href: "/admin/support", labelKey: "adminSidebar.support", icon: "💬" },
 ];
 
 export function DashboardShell({
@@ -36,6 +41,7 @@ export function DashboardShell({
   variant: "user" | "admin";
 }) {
   const { user, isLoading, logout } = useAuth();
+  const { t } = useTranslation();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -58,7 +64,7 @@ export function DashboardShell({
   if (isLoading || !user) {
     return (
       <div className="flex flex-1 items-center justify-center py-32 text-slate-400">
-        Yuklanmoqda...
+        {t("common.loading")}
       </div>
     );
   }
@@ -86,28 +92,34 @@ export function DashboardShell({
                 }`}
               >
                 <span>{item.icon}</span>
-                {item.label}
+                {t(item.labelKey)}
               </Link>
             );
           })}
         </nav>
-        <div className="mt-10 rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
+        <div className="mt-6">
+          <LanguageSwitcher />
+        </div>
+        <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
           <p className="font-medium">{user.fullName}</p>
           <p className="mt-0.5 truncate text-xs text-slate-400">{user.email}</p>
           <button onClick={logout} className="mt-3 text-xs font-semibold text-rose-400 hover:underline">
-            Chiqish
+            {t("sidebar.logout")}
           </button>
         </div>
       </aside>
 
       <div className="flex-1 px-4 py-8 sm:px-6 lg:px-10">
-        <div className="mb-6 flex items-center justify-between lg:hidden">
+        <div className="mb-6 flex items-center justify-between gap-3 lg:hidden">
           <span className="font-semibold">
             ADM <span className="text-emerald-400">Trading</span>
           </span>
-          <button onClick={logout} className="text-xs font-semibold text-rose-400">
-            Chiqish
-          </button>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher compact />
+            <button onClick={logout} className="text-xs font-semibold text-rose-400">
+              {t("sidebar.logout")}
+            </button>
+          </div>
         </div>
         {children}
       </div>
