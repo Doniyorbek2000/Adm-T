@@ -18,6 +18,11 @@ export function withRateLimit<T>(key: string, fn: () => Promise<T>): Promise<T> 
     .catch(() => undefined)
     .then(() => new Promise<void>((resolve) => setTimeout(resolve, MIN_INTERVAL_MS)))
     .then(fn);
-  queues.set(key, scheduled.catch(() => undefined));
+  const queued = scheduled.catch(() => undefined);
+  queues.set(key, queued);
+  // Remove from map once settled so the Map doesn't grow unboundedly
+  queued.finally(() => {
+    if (queues.get(key) === queued) queues.delete(key);
+  });
   return scheduled;
 }

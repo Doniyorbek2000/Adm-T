@@ -13,7 +13,7 @@ function planRank(plan: string): number {
 export const listSignals = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const userPlan = req.user!.plan;
   const userRank = planRank(userPlan);
-  const myDelayMin = PLAN_LIMITS[userPlan].signalDelayMin;
+  const myDelayMin = PLAN_LIMITS[userPlan as PlanType]?.signalDelayMin ?? 0;
 
   const signals = await prisma.signal.findMany({
     orderBy: { createdAt: "desc" },

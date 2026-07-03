@@ -79,6 +79,17 @@ export default function AccountsPage() {
 
   async function handleMode(acc: AccountDto, mode: "SIGNAL_ONLY" | "AUTO_TRADE") {
     if (!token || updatingId) return;
+    if (mode === "AUTO_TRADE") {
+      const confirmed = window.confirm(
+        `DIQQAT: Avto savdo rejimi\n\n` +
+        `${acc.exchange} · ${acc.label} hisobingizda AI mustaqil ravishda\n` +
+        `REAL pul bilan savdo qiladi!\n\n` +
+        `• Balans: $${acc.balanceUsd.toLocaleString()}\n` +
+        `• Risk darajasi: ${acc.riskLevel === 1 ? "Past (3%)" : acc.riskLevel === 2 ? "O'rta (7%)" : "Yuqori (15%)"}\n\n` +
+        `Davom etishni xohlaysizmi?`
+      );
+      if (!confirmed) return;
+    }
     setUpdatingId(acc.id);
     setNotice(null);
     try {

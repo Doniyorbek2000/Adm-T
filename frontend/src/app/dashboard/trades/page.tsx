@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, ApiError } from "@/lib/api";
 
 interface TradeDto {
   id: string;
@@ -30,6 +30,8 @@ interface Summary {
 }
 
 type HistoryFilter = "ALL" | "WIN" | "LOSS" | "BUY" | "SELL" | "AI";
+
+const REFRESH_SEC = 30;
 
 function duration(from: string, to: string | null): string {
   const end = to ? new Date(to).getTime() : Date.now();
@@ -59,23 +61,80 @@ const MODE_BADGE: Record<string, string> = {
 
 export default function TradesPage() {
   const { token } = useAuth();
-  const [trades, setTrades] = useState<TradeDto[]>([]);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [trades, setTrades]     = useState<TradeDto[]>([]);
+  const [summary, setSummary]   = useState<Summary | null>(null);
+  const [prices, setPrices]     = useState<Record<string, number>>({});
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(REFRESH_SEC);
   const [histFilter, setHistFilter] = useState<HistoryFilter>("ALL");
+  const [closingId, setClosingId]  = useState<string | null>(null);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!token) return;
-    Promise.all([
-      apiRequest<{ trades: TradeDto[] }>("/trades", { token }),
-      apiRequest<Summary>("/trades/summary", { token }),
-    ]).then(([t, s]) => {
+    setError(null);
+    try {
+      const [t, s] = await Promise.all([
+        apiRequest<{ trades: TradeDto[] }>("/trades", { token }),
+        apiRequest<Summary>("/trades/summary", { token }),
+      ]);
       setTrades(t.trades);
       setSummary(s);
-    }).finally(() => setLoading(false));
+      setCountdown(REFRESH_SEC);
+
+      // Fetch live prices for open positions
+      const openSymbols = [...new Set(t.trades.filter((tr) => tr.status === "OPEN").map((tr) => tr.symbol))];
+      if (openSymbols.length > 0) {
+        try {
+          const pd = await apiRequest<{ prices: Record<string, number> }>(
+            `/market/prices?symbols=${openSymbols.join(",")}`,
+            { token }
+          );
+          setPrices(pd.prices);
+        } catch {
+          // non-critical
+        }
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Ma'lumotlarni yuklashda xatolik");
+    } finally {
+      setLoading(false);
+    }
   }, [token]);
 
-  useEffect(() => { load(); }, [load]);
+  // Initial load + auto-refresh every REFRESH_SEC seconds
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, REFRESH_SEC * 1000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  // Countdown timer
+  useEffect(() => {
+    const timer = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : REFRESH_SEC)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function handleClose(tradeId: string) {
+    const trade = trades.find((t) => t.id === tradeId);
+    const isReal = trade?.executionMode === "LIVE" || trade?.executionMode === "TESTNET";
+    const confirmMsg = isReal
+      ? `DIQQAT: Bu HAQIQIY savdo!\n${trade?.symbol} pozitsiyasini birjada bozor narxida yopasizmi?`
+      : `${trade?.symbol} simulyatsiya savdosini yopasizmi?`;
+
+    if (!window.confirm(confirmMsg)) return;
+    if (!token) return;
+
+    setClosingId(tradeId);
+    try {
+      await apiRequest(`/trades/${tradeId}/close`, { method: "POST", token });
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Yopishda xatolik yuz berdi");
+    } finally {
+      setClosingId(null);
+    }
+  }
 
   const open   = trades.filter((t) => t.status === "OPEN");
   const closed = trades.filter((t) => t.status === "CLOSED");
@@ -113,21 +172,27 @@ export default function TradesPage() {
             AI tomonidan bajarilgan va qo'lda ochilgan barcha pozitsiyalar
           </p>
         </div>
-        <button
-          onClick={load}
-          className="self-start rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium hover:bg-white/10"
-        >
-          ↻ Yangilash
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">{countdown}s da yangilanadi</span>
+          <button
+            onClick={load}
+            className="self-start rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium hover:bg-white/10"
+          >
+            ↻ Yangilash
+          </button>
+        </div>
       </div>
+
+      {/* ── Error Banner ── */}
+      {error && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+          {error}
+        </div>
+      )}
 
       {/* ── Stats Row ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Chip
-          label="Jami balans"
-          value={summary ? `$${summary.totalBalance.toLocaleString()}` : "—"}
-          color="white"
-        />
+        <Chip label="Jami balans" value={summary ? `$${summary.totalBalance.toLocaleString()}` : "—"} color="white" />
         <Chip
           label="Amalga oshirilgan P&L"
           value={summary ? `${summary.realizedPnl >= 0 ? "+" : ""}$${summary.realizedPnl.toFixed(2)}` : "—"}
@@ -191,7 +256,13 @@ export default function TradesPage() {
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {open.map((t) => (
-              <OpenTradeCard key={t.id} trade={t} />
+              <OpenTradeCard
+                key={t.id}
+                trade={t}
+                currentPrice={prices[t.symbol]}
+                closing={closingId === t.id}
+                onClose={() => handleClose(t.id)}
+              />
             ))}
           </div>
         </section>
@@ -237,28 +308,17 @@ export default function TradesPage() {
                 const mode = t.executionMode ?? "SIMULATED";
                 return (
                   <tr key={t.id} className="group hover:bg-white/[0.02]">
-                    {/* Symbol + Direction + badges */}
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-mono font-semibold">{t.symbol}</span>
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-xs font-bold ${
-                            t.direction === "BUY"
-                              ? "bg-emerald-500/20 text-emerald-300"
-                              : "bg-rose-500/20 text-rose-300"
-                          }`}
-                        >
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-bold ${t.direction === "BUY" ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}>
                           {t.direction === "BUY" ? "▲" : "▼"} {t.direction}
                         </span>
                         {t.executedByAi && (
-                          <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">
-                            🤖
-                          </span>
+                          <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">🤖</span>
                         )}
                         {mode !== "SIMULATED" && (
-                          <span
-                            className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${MODE_BADGE[mode] ?? MODE_BADGE.SIMULATED}`}
-                          >
+                          <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${MODE_BADGE[mode] ?? MODE_BADGE.SIMULATED}`}>
                             {mode}
                           </span>
                         )}
@@ -269,21 +329,14 @@ export default function TradesPage() {
                         )}
                       </div>
                     </td>
-                    {/* Account */}
                     <td className="px-4 py-3 text-slate-400">
-                      {t.brokerAccount
-                        ? `${t.brokerAccount.exchange} · ${t.brokerAccount.label}`
-                        : "—"}
+                      {t.brokerAccount ? `${t.brokerAccount.exchange} · ${t.brokerAccount.label}` : "—"}
                     </td>
-                    {/* Entry */}
                     <td className="px-4 py-3 font-mono text-slate-300">{fmt(t.entryPrice)}</td>
-                    {/* Exit */}
-                    <td className="px-4 py-3 font-mono text-slate-300">
-                      {t.exitPrice != null ? fmt(t.exitPrice) : "—"}
+                    <td className="px-4 py-3 font-mono text-slate-300">{t.exitPrice != null ? fmt(t.exitPrice) : "—"}</td>
+                    <td className="px-4 py-3 font-mono text-slate-400">
+                      {t.quantity} <span className="text-[10px] text-slate-600">{t.symbol.split("/")[0]}</span>
                     </td>
-                    {/* Quantity */}
-                    <td className="px-4 py-3 font-mono text-slate-400">{t.quantity}</td>
-                    {/* P&L */}
                     <td className="px-4 py-3">
                       {t.pnlUsd != null ? (
                         <div>
@@ -300,11 +353,7 @@ export default function TradesPage() {
                         <span className="text-slate-500">—</span>
                       )}
                     </td>
-                    {/* Duration */}
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500">
-                      {duration(t.openedAt, t.closedAt)}
-                    </td>
-                    {/* Date */}
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500">{duration(t.openedAt, t.closedAt)}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {new Date(t.openedAt).toLocaleDateString("uz-UZ")}
                       <br />
@@ -329,49 +378,80 @@ export default function TradesPage() {
 }
 
 // ── Open Trade Card ──────────────────────────────────────────────────────────
-function OpenTradeCard({ trade: t }: { trade: TradeDto }) {
+function OpenTradeCard({
+  trade: t,
+  currentPrice,
+  closing,
+  onClose,
+}: {
+  trade: TradeDto;
+  currentPrice?: number;
+  closing: boolean;
+  onClose: () => void;
+}) {
   const isBuy = t.direction === "BUY";
   const mode  = t.executionMode ?? "SIMULATED";
+  const isReal = mode === "LIVE" || mode === "TESTNET";
+
+  const unrealizedPnl = currentPrice != null
+    ? (isBuy ? (currentPrice - t.entryPrice) : (t.entryPrice - currentPrice)) * t.quantity
+    : null;
+  const unrealizedPct = currentPrice != null && t.entryPrice > 0
+    ? ((isBuy ? currentPrice - t.entryPrice : t.entryPrice - currentPrice) / t.entryPrice) * 100
+    : null;
+  const isProfit = unrealizedPnl != null && unrealizedPnl >= 0;
 
   return (
-    <div
-      className={`rounded-2xl border p-4 ${
-        isBuy ? "border-emerald-500/25 bg-emerald-500/[0.04]" : "border-rose-500/25 bg-rose-500/[0.04]"
-      }`}
-    >
+    <div className={`rounded-2xl border p-4 ${isBuy ? "border-emerald-500/25 bg-emerald-500/[0.04]" : "border-rose-500/25 bg-rose-500/[0.04]"}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="font-mono text-lg font-bold">{t.symbol}</span>
-          <span
-            className={`rounded px-2 py-0.5 text-xs font-bold ${
-              isBuy ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"
-            }`}
-          >
+          <span className={`rounded px-2 py-0.5 text-xs font-bold ${isBuy ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}>
             {isBuy ? "▲ BUY" : "▼ SELL"}
           </span>
-          {t.executedByAi && (
-            <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">🤖 AI</span>
-          )}
+          {t.executedByAi && <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">🤖 AI</span>}
           {mode !== "SIMULATED" && (
             <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${MODE_BADGE[mode] ?? MODE_BADGE.SIMULATED}`}>
               {mode}
             </span>
           )}
         </div>
-        <span className="flex items-center gap-1 text-xs text-sky-300">
+        <span className="flex items-center gap-1 text-xs text-sky-300 shrink-0">
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" />
           Faol
         </span>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+      <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <div className="rounded-lg bg-white/5 px-2.5 py-2">
           <p className="text-xs text-slate-500">Kirish narxi</p>
-          <p className="mt-0.5 font-mono font-semibold">{fmt(t.entryPrice)}</p>
+          <p className="mt-0.5 font-mono font-semibold">{t.entryPrice.toFixed(2)}</p>
         </div>
-        <div className="rounded-lg bg-white/5 px-2.5 py-2">
-          <p className="text-xs text-slate-500">Miqdor</p>
-          <p className="mt-0.5 font-mono font-semibold">{t.quantity}</p>
+        {currentPrice != null ? (
+          <div className="rounded-lg bg-white/5 px-2.5 py-2">
+            <p className="text-xs text-slate-500">Joriy narx</p>
+            <p className="mt-0.5 font-mono font-semibold">{currentPrice.toFixed(2)}</p>
+          </div>
+        ) : (
+          <div className="rounded-lg bg-white/5 px-2.5 py-2">
+            <p className="text-xs text-slate-500">Miqdor</p>
+            <p className="mt-0.5 font-mono font-semibold">{t.quantity} <span className="text-[10px] text-slate-600">{t.symbol.split("/")[0]}</span></p>
+          </div>
+        )}
+        <div className={`rounded-lg px-2.5 py-2 ${unrealizedPnl != null ? (isProfit ? "bg-emerald-500/10" : "bg-rose-500/10") : "bg-white/5"}`}>
+          <p className="text-xs text-slate-500">Hisob. P&L</p>
+          {unrealizedPnl != null ? (
+            <p className={`mt-0.5 font-mono font-bold ${isProfit ? "text-emerald-400" : "text-rose-400"}`}>
+              {isProfit ? "+" : ""}${unrealizedPnl.toFixed(2)}
+              {unrealizedPct != null && (
+                <span className="ml-1 text-[10px] font-normal">
+                  ({isProfit ? "+" : ""}{unrealizedPct.toFixed(2)}%)
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="mt-0.5 font-mono text-slate-500">—</p>
+          )}
         </div>
         <div className="rounded-lg bg-white/5 px-2.5 py-2">
           <p className="text-xs text-slate-500">Vaqt</p>
@@ -389,6 +469,18 @@ function OpenTradeCard({ trade: t }: { trade: TradeDto }) {
           AI ishonchi: <span className="font-semibold text-slate-300">{t.signal.confidence}%</span>
         </p>
       )}
+
+      <button
+        onClick={onClose}
+        disabled={closing}
+        className={`mt-3 w-full rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+          isReal
+            ? "border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+            : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+        } disabled:opacity-50`}
+      >
+        {closing ? "Yopilmoqda…" : isReal ? "⚠ Pozitsiyani yopish (REAL)" : "Pozitsiyani yopish"}
+      </button>
     </div>
   );
 }

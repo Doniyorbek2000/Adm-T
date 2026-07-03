@@ -95,6 +95,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push("/");
   }, [router]);
 
+  // Auto-logout when any API call returns 401 (expired/revoked token)
+  useEffect(() => {
+    const handle = () => {
+      if (token) logout();
+    };
+    window.addEventListener("adm:unauthorized", handle);
+    return () => window.removeEventListener("adm:unauthorized", handle);
+  }, [token, logout]);
+
   const refreshUser = useCallback(async () => {
     if (!token) return;
     await loadMe(token);

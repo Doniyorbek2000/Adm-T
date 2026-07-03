@@ -14,6 +14,7 @@ import paymentRoutes from "./routes/paymentRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 import supportRoutes from "./routes/supportRoutes";
 import adminRoutes from "./routes/adminRoutes";
+import marketRoutes from "./routes/marketRoutes";
 
 export const app = express();
 
@@ -61,6 +62,7 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/market", marketRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

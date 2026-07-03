@@ -114,7 +114,8 @@ export async function fetchUsdtBalance(apiKey: string, apiSecret: string): Promi
     const balances: Array<{ asset: string; free: string; locked: string }> = data?.balances ?? [];
     const usdt = balances.find((b) => b.asset === "USDT");
     if (!usdt) return 0;
-    return Number((Number(usdt.free) + Number(usdt.locked)).toFixed(2));
+    // Only count free (unlocked) balance — locked is already committed to open orders
+    return Number(Number(usdt.free).toFixed(2));
   });
 }
 
