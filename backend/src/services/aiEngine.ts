@@ -4,6 +4,7 @@ import { decryptSecret } from "../utils/crypto";
 import { exchangeMode, fetchSpotPrice } from "./exchanges/binance";
 import { ExchangeAdapter, ExchangeCredentials, getExchangeAdapter, isRealExchangeIntegrated } from "./exchanges/registry";
 import { PLAN_LIMITS } from "./planLimits";
+import { findBestSignal } from "./technicalAnalysis";
 
 const SYMBOLS = [
   "BTC/USDT",
@@ -16,54 +17,6 @@ const SYMBOLS = [
   "AVAX/USDT",
 ];
 
-const ANALYSIS_TEMPLATES = [
-  "RSI ortiqcha sotilgan zonadan chiqmoqda, kuchli qaytish (reversal) ehtimoli yuqori.",
-  "50 va 200 davriy harakatlanuvchi o'rtachalar 'oltin kesishma' hosil qildi - ko'tarilish trendi kutilmoqda.",
-  "Narx muhim qo'llab-quvvatlash darajasidan sakradi, hajm (volume) sezilarli o'sdi.",
-  "MACD signalligi kesib o'tdi - momentum o'zgarishi aniqlandi.",
-  "Bollinger lentalari torayib bormoqda - volatillik portlashi (breakout) yaqinlashmoqda.",
-  "Yuqori vaqt oralig'idagi trend bilan moslik tasdiqlandi, risk/foyda nisbati qulay.",
-  "Likvidlik zonasiga yaqinlashish va order-block tahlili asosida kirish nuqtasi aniqlandi.",
-  "Fibonacci tuzatish darajasi 0.618 dan qaytish signali shakllandi.",
-];
-
-const PRICE_DECIMALS = (symbol: string) => (symbol === "XRP/USDT" || symbol === "ADA/USDT" ? 4 : 2);
-
-function pick<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function randomBetween(min: number, max: number): number {
-  return Math.random() * (max - min) + min;
-}
-
-function basePriceFor(symbol: string): number {
-  switch (symbol) {
-    case "BTC/USDT": return 108000;
-    case "ETH/USDT": return 2500;
-    case "BNB/USDT": return 650;
-    case "SOL/USDT": return 155;
-    case "XRP/USDT": return 2.25;
-    case "TON/USDT": return 3.2;
-    case "ADA/USDT": return 0.75;
-    case "AVAX/USDT": return 22;
-    default: return 100;
-  }
-}
-
-async function resolveEntryPrice(symbol: string): Promise<number> {
-  const decimals = PRICE_DECIMALS(symbol);
-  try {
-    const livePrice = await fetchSpotPrice(symbol);
-    const entry = livePrice * randomBetween(0.998, 1.002);
-    return Number(entry.toFixed(decimals));
-  } catch (err) {
-    console.error(`[AI Engine] Binance narxini olib bo'lmadi (${symbol}), zaxira narxdan foydalanilmoqda:`, err instanceof Error ? err.message : err);
-    const base = basePriceFor(symbol);
-    return Number((base * randomBetween(0.985, 1.015)).toFixed(decimals));
-  }
-}
-
 function minPlanForConfidence(confidence: number): PlanType {
   if (confidence >= 90) return PlanType.VIP;
   if (confidence >= 80) return PlanType.ULTRA;
@@ -71,35 +24,41 @@ function minPlanForConfidence(confidence: number): PlanType {
   return PlanType.FREE;
 }
 
+/**
+ * Haqiqiy texnik tahlil asosida signal yaratadi.
+ * RSI, MACD, EMA, BB, Stochastic, ATR indikatorlaridan foydalanadi.
+ * Tasodifiy emas — real bozor ma'lumotlariga asoslangan.
+ */
 export async function generateSignal() {
-  const symbol = pick(SYMBOLS);
-  const direction = pick([SignalDirection.BUY, SignalDirection.SELL]);
-  const entryPrice = await resolveEntryPrice(symbol);
+  const result = await findBestSignal(SYMBOLS);
 
-  const tpDistancePct = randomBetween(0.015, 0.06);
-  const slDistancePct = randomBetween(0.008, 0.025);
+  // Agar hech qanday kuchli signal topilmasa — null qaytarish (bu siklda signal yaratilmaydi)
+  if (!result) {
+    console.log("[AI Engine] Bu siklda kuchli signal topilmadi (bozor neytral)");
+    return null;
+  }
 
-  const takeProfit =
-    direction === SignalDirection.BUY
-      ? Number((entryPrice * (1 + tpDistancePct)).toFixed(6))
-      : Number((entryPrice * (1 - tpDistancePct)).toFixed(6));
-  const stopLoss =
-    direction === SignalDirection.BUY
-      ? Number((entryPrice * (1 - slDistancePct)).toFixed(6))
-      : Number((entryPrice * (1 + slDistancePct)).toFixed(6));
-
-  const confidence = Math.round(randomBetween(60, 97));
+  const { symbol, signal: ta } = result;
+  const confidence = ta.confidence;
   const minPlan = minPlanForConfidence(confidence);
+
+  const direction = ta.direction === "BUY" ? SignalDirection.BUY : SignalDirection.SELL;
+
+  console.log(
+    `[AI Engine] ${symbol} ${ta.direction} signali | Ishonch: ${confidence}% | ` +
+    `RSI: ${ta.indicators.rsi} | MACD: ${ta.indicators.macdHist > 0 ? "+" : ""}${ta.indicators.macdHist.toFixed(4)} | ` +
+    `BB%: ${ta.indicators.bbPercent}% | ATR: ${ta.indicators.atr.toFixed(4)}`
+  );
 
   const signal = await prisma.signal.create({
     data: {
       symbol,
       direction,
-      entryPrice,
-      takeProfit,
-      stopLoss,
+      entryPrice: ta.entryPrice,
+      takeProfit: ta.takeProfit,
+      stopLoss:   ta.stopLoss,
       confidence,
-      analysis: pick(ANALYSIS_TEMPLATES),
+      analysis:   ta.analysis,
       minPlan,
       status: SignalStatus.ACTIVE,
     },
@@ -477,8 +436,10 @@ export async function runAiCycle() {
   cycleRunning = true;
   try {
     await evaluateOpenSignals();
-    if (Math.random() < 0.6) {
-      const signal = await generateSignal();
+
+    // Texnik tahlil har siklda ishga tushadi — signal faqat real ko'rsatkich bo'lganda yaratiladi
+    const signal = await generateSignal();
+    if (signal) {
       await autoExecuteSignal({
         id: signal.id,
         symbol: signal.symbol,
