@@ -2,7 +2,7 @@ import { PlanType, SignalDirection, SignalStatus } from "../constants/enums";
 import { prisma } from "../utils/prisma";
 import { decryptSecret } from "../utils/crypto";
 import { env } from "../utils/env";
-import { exchangeMode, floorToStep } from "./exchanges/binance";
+import { exchangeMode, fetchSpreadPct, floorToStep, MAX_ENTRY_SPREAD_PCT } from "./exchanges/binance";
 import {
   futuresAvailableUsdt,
   futuresCancelAllOrders,
@@ -16,10 +16,11 @@ import {
   futuresTotalUsdt,
 } from "./exchanges/binanceFutures";
 import { ExchangeAdapter, ExchangeCredentials, getExchangeAdapter, isRealExchangeIntegrated } from "./exchanges/registry";
-import { notifyUser } from "./notifier";
+import { applyContextToSignal, fetchFundingRate, getMarketContext } from "./marketContext";
+import { notifyUser, sendTelegram } from "./notifier";
 import { getCachedPrice, getPrice, startPriceFeed, stopPriceFeed } from "./priceFeed";
 import { PLAN_LIMITS } from "./planLimits";
-import { isAiEnginePaused } from "./platformSettings";
+import { getSetting, isAiEnginePaused, setSetting } from "./platformSettings";
 import {
   checkTradeAllowed,
   computePositionSizeUsd,
@@ -66,9 +67,34 @@ export async function generateSignal() {
   }
 
   const { symbol, signal: ta } = result;
-  const confidence = ta.confidence;
-  const minPlan = minPlanForConfidence(confidence);
 
+  // Bozor konteksti filtri: Fear&Greed, BTC momentum, funding rate.
+  // Texnik jihatdan kuchli, ammo bozor sharoitida xavfli signallar bloklanadi.
+  let confidence = ta.confidence;
+  let contextNotes = "";
+  try {
+    const ctx = await getMarketContext();
+    const fundingRate = ta.direction !== "HOLD" ? await fetchFundingRate(symbol) : null;
+    const decision = applyContextToSignal({
+      direction: ta.direction as "BUY" | "SELL",
+      confidence: ta.confidence,
+      symbol,
+      ctx,
+      fundingRate,
+    });
+
+    if (!decision.allowed) {
+      console.log(`[AI Engine] ${symbol} ${ta.direction} signali kontekst filtri bilan bloklandi: ${decision.blockReason}`);
+      return null;
+    }
+    confidence = decision.confidence;
+    if (decision.notes.length > 0) contextNotes = "; " + decision.notes.join("; ");
+  } catch (err) {
+    // Kontekst olinmasa signal texnik tahlil bo'yicha davom etadi
+    console.warn("[AI Engine] Bozor kontekstini olishda xato:", err instanceof Error ? err.message : err);
+  }
+
+  const minPlan = minPlanForConfidence(confidence);
   const direction = ta.direction === "BUY" ? SignalDirection.BUY : SignalDirection.SELL;
 
   console.log(
@@ -85,7 +111,7 @@ export async function generateSignal() {
       takeProfit: ta.takeProfit,
       stopLoss:   ta.stopLoss,
       confidence,
-      analysis:   ta.analysis,
+      analysis:   ta.analysis + contextNotes,
       minPlan,
       status: SignalStatus.ACTIVE,
     },
@@ -879,6 +905,13 @@ async function openRealExchangeTrade(
     return;
   }
 
+  // Likvidlik nazorati: spread keng bo'lsa market buyurtma yomon to'ldiriladi
+  const spreadPct = await fetchSpreadPct(signal.symbol);
+  if (spreadPct !== null && spreadPct > MAX_ENTRY_SPREAD_PCT) {
+    console.log(`[AI Engine] Hisob ${account.id}: ${signal.symbol} spread ${spreadPct}% > ${MAX_ENTRY_SPREAD_PCT}% — likvidlik past, savdo ochilmadi`);
+    return;
+  }
+
   const profile = getRiskProfile(account.riskLevel);
   const deployedUsd = await deployedCapitalUsd(account.id);
   const availableUsd = Math.max(0, account.balanceUsd - deployedUsd);
@@ -988,6 +1021,13 @@ async function openFuturesTrade(
   }
   if (!isEntryStillValid(signal.direction, signal.entryPrice, signal.takeProfit, signal.stopLoss, currentPrice)) {
     console.log(`[AI Engine] Hisob ${account.id}: ${signal.symbol} futures kirish eskirgan — savdo ochilmadi`);
+    return;
+  }
+
+  // Likvidlik nazorati (spot spread futures uchun ham yaxshi indikator)
+  const spreadPct = await fetchSpreadPct(signal.symbol);
+  if (spreadPct !== null && spreadPct > MAX_ENTRY_SPREAD_PCT) {
+    console.log(`[AI Engine] Hisob ${account.id}: ${signal.symbol} spread ${spreadPct}% — likvidlik past, futures savdo ochilmadi`);
     return;
   }
 
@@ -1136,7 +1176,79 @@ export async function runAiCycle() {
 
 let intervalHandle: NodeJS.Timeout | null = null;
 let fastGuardHandle: NodeJS.Timeout | null = null;
+let reportHandle: NodeJS.Timeout | null = null;
 let fastGuardRunning = false;
+
+/* ─── Watchdog: ketma-ket sikl xatolarida Telegram ogohlantirishi ──────────── */
+
+let consecutiveCycleFailures = 0;
+let lastFailureAlertAt = 0;
+
+async function guardedCycle() {
+  try {
+    await runAiCycle();
+    consecutiveCycleFailures = 0;
+  } catch (err) {
+    consecutiveCycleFailures++;
+    console.error("AI cycle error:", err);
+    // 3+ ketma-ket xato = tizimli muammo (tarmoq, DB, birja) — egasiga xabar.
+    // Soatiga bir martadan ko'p bezovta qilmaymiz.
+    if (consecutiveCycleFailures >= 3 && Date.now() - lastFailureAlertAt > 60 * 60 * 1000) {
+      lastFailureAlertAt = Date.now();
+      void sendTelegram(
+        `⚠️ <b>AI dvigatel muammosi</b>\n` +
+        `${consecutiveCycleFailures} ta ketma-ket sikl xato bilan tugadi.\n` +
+        `Oxirgi xato: ${err instanceof Error ? err.message : String(err)}\n` +
+        `Ochiq pozitsiyalar birja tomonidagi TP/SL bilan himoyalangan. ` +
+        `Loglarni tekshiring: pm2 logs adm-backend`
+      );
+    }
+  }
+}
+
+/* ─── Kunlik Telegram hisoboti (har kuni soat 09:00 da) ────────────────────── */
+
+const DAILY_REPORT_HOUR = 9;
+
+async function maybeSendDailyReport() {
+  try {
+    const now = new Date();
+    if (now.getHours() !== DAILY_REPORT_HOUR) return;
+
+    const today = now.toISOString().slice(0, 10);
+    if ((await getSetting("lastDailyReport")) === today) return;
+    await setSetting("lastDailyReport", today);
+
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [openTrades, closedLastDay, accounts, paused] = await Promise.all([
+      prisma.trade.findMany({ where: { status: "OPEN" }, select: { symbol: true, direction: true, entryPrice: true } }),
+      prisma.trade.findMany({
+        where: { status: "CLOSED", closedAt: { gte: dayAgo } },
+        select: { pnlUsd: true },
+      }),
+      prisma.brokerAccount.findMany({ where: { isConnected: true }, select: { balanceUsd: true } }),
+      isAiEnginePaused(),
+    ]);
+
+    const dayPnl = closedLastDay.reduce((s, t) => s + (t.pnlUsd ?? 0), 0);
+    const dayWins = closedLastDay.filter((t) => (t.pnlUsd ?? 0) > 0).length;
+    const totalBalance = accounts.reduce((s, a) => s + a.balanceUsd, 0);
+
+    const openList = openTrades.length > 0
+      ? openTrades.map((tr) => `  • ${tr.symbol} ${tr.direction === "BUY" ? "LONG" : "SHORT"} @ ${tr.entryPrice}`).join("\n")
+      : "  yo'q";
+
+    await sendTelegram(
+      `📊 <b>ADM Trading — kunlik hisobot</b>\n` +
+      `Rejim: ${exchangeMode().toUpperCase()}${paused ? " · ⏸ TO'XTATILGAN" : " · ▶ ishlamoqda"}\n` +
+      `Balans: $${totalBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}\n` +
+      `Oxirgi 24 soat: ${closedLastDay.length} savdo yopildi (${dayWins} foydali), natija: ${dayPnl >= 0 ? "+" : ""}${dayPnl.toFixed(2)}$\n` +
+      `Ochiq pozitsiyalar (${openTrades.length}):\n${openList}`
+    );
+  } catch (err) {
+    console.error("[AI Engine] Kunlik hisobot xatosi:", err instanceof Error ? err.message : err);
+  }
+}
 
 /**
  * Tezkor himoya sikli (10s): WebSocket keshdagi real-vaqt narxlar bilan
@@ -1162,14 +1274,19 @@ export function startAiEngine(intervalMs = 60_000) {
   // Real-vaqt narx oqimi (WebSocket) — TP/SL aniqligi uchun
   startPriceFeed(SYMBOLS);
 
-  runAiCycle().catch((err) => console.error("AI cycle error:", err));
+  void guardedCycle();
   intervalHandle = setInterval(() => {
-    runAiCycle().catch((err) => console.error("AI cycle error:", err));
+    void guardedCycle();
   }, intervalMs);
 
   fastGuardHandle = setInterval(() => {
     void runFastGuard();
   }, 10_000);
+
+  // Kunlik hisobot tekshiruvi har 5 daqiqada (soat 09:00 da bir marta yuboradi)
+  reportHandle = setInterval(() => {
+    void maybeSendDailyReport();
+  }, 5 * 60 * 1000);
 }
 
 export function stopAiEngine() {
@@ -1180,6 +1297,10 @@ export function stopAiEngine() {
   if (fastGuardHandle) {
     clearInterval(fastGuardHandle);
     fastGuardHandle = null;
+  }
+  if (reportHandle) {
+    clearInterval(reportHandle);
+    reportHandle = null;
   }
   stopPriceFeed();
 }

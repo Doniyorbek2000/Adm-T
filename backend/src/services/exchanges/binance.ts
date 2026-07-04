@@ -91,6 +91,28 @@ async function signedRequest(
   return data;
 }
 
+/**
+ * Bid-ask spread (foizda). Keng spread = past likvidlik — market buyurtma
+ * yomon narxda to'ldiriladi, bunday paytda kirishni o'tkazib yuborgan ma'qul.
+ * null — olinmadi (bu holda kirish bloklanmaydi).
+ */
+export async function fetchSpreadPct(symbol: string): Promise<number | null> {
+  try {
+    return await withRateLimit("binance:public", async () => {
+      const data = await publicGet("/api/v3/ticker/bookTicker", { symbol: toBinanceSymbol(symbol) });
+      const bid = Number(data?.bidPrice);
+      const ask = Number(data?.askPrice);
+      if (!(bid > 0) || !(ask > 0) || ask < bid) return null;
+      return Number((((ask - bid) / ((ask + bid) / 2)) * 100).toFixed(4));
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Kirishdan oldin ruxsat etilgan maksimal spread (%) */
+export const MAX_ENTRY_SPREAD_PCT = 0.5;
+
 /** Joriy bozor narxini Binance'ning ommaviy (autentifikatsiyasiz) endpointidan olish */
 export async function fetchSpotPrice(symbol: string): Promise<number> {
   return withRateLimit("binance:public", async () => {
