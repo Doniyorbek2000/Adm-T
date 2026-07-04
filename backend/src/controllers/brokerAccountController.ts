@@ -7,7 +7,7 @@ import { AuthedRequest } from "../middleware/auth";
 import { encryptSecret, maskSecret } from "../utils/crypto";
 import { PLAN_LIMITS } from "../services/planLimits";
 import { ExchangeApiError, getExchangeAdapter } from "../services/exchanges/registry";
-import { exchangeMode } from "../services/exchanges/binance";
+import { exchangeMode, fetchApiKeyRestrictions } from "../services/exchanges/binance";
 import { futuresTotalUsdt } from "../services/exchanges/binanceFutures";
 
 /**
@@ -111,11 +111,34 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
         data.marketType === "FUTURES"
           ? await futuresTotalUsdt({ apiKey: data.apiKey, apiSecret: data.apiSecret })
           : await adapter.fetchQuoteBalance({ apiKey: data.apiKey, apiSecret: data.apiSecret, passphrase: data.passphrase });
+
+      // Xavfsizlik: pul yechish (withdrawal) yoqilgan Binance kaliti RAD
+      // ETILADI — bot buzilgan taqdirda ham mablag'ni yechib bo'lmasligi kerak
+      if (data.exchange === "Binance") {
+        const restrictions = await fetchApiKeyRestrictions(data.apiKey, data.apiSecret);
+        if (restrictions?.withdrawalsEnabled) {
+          throw new AppError(
+            "Bu API kalitda PUL YECHISH (withdrawal) ruxsati yoqilgan — xavfsizlik uchun bunday kalit qabul qilinmaydi. " +
+            "Binance'da withdrawal ruxsatisiz yangi kalit yarating (faqat 'Enable Reading' va 'Enable Spot Trading'" +
+            (data.marketType === "FUTURES" ? " + 'Enable Futures'" : "") + " yoqilgan bo'lsin).",
+            400
+          );
+        }
+        if (data.marketType === "FUTURES" && restrictions && !restrictions.futuresEnabled) {
+          throw new AppError(
+            "Bu API kalitda Futures ruxsati yo'q. Binance'da kalit sozlamalaridan 'Enable Futures'ni yoqing yoki SPOT rejimini tanlang.",
+            400
+          );
+        }
+      }
       connectionNotice =
         exchangeMode() === "live"
           ? ` Hisobingiz ${adapter.id}'ning HAQIQIY (live) muhitiga ulandi - AI sizning real mablag'ingiz bilan ishlaydi.`
           : ` Hisobingiz hozircha ${adapter.id} TESTNET/sinov muhitiga ulangan - AI sun'iy test mablag'i bilan ishlaydi, real pulingizga hech qanday ta'sir qilmaydi.`;
     } catch (err) {
+      // Ichkarida ataylab tashlangan xato (withdrawal/futures ruxsat tekshiruvi)
+      // o'z xabari bilan qaytadi
+      if (err instanceof AppError) throw err;
       if (err instanceof ExchangeApiError && err.providerCode !== undefined) {
         // Birja o'zi aniq xato kodi bilan rad etdi - bu haqiqatan ham kalit/ruxsat muammosi
         throw new AppError(

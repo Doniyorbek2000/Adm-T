@@ -119,6 +119,35 @@ export async function fetchUsdtBalance(apiKey: string, apiSecret: string): Promi
   });
 }
 
+export interface ApiKeyRestrictions {
+  withdrawalsEnabled: boolean;
+  spotTradingEnabled: boolean;
+  futuresEnabled: boolean;
+}
+
+/**
+ * API kalit ruxsatlarini tekshirish (faqat live rejimda mavjud — testnet'da
+ * sapi endpointlari yo'q). Pul yechish (withdrawal) yoqilgan kalit trading
+ * botiga ULANMASLIGI kerak: bot buzilsa ham mablag' yechib bo'lmasin.
+ * null — tekshirib bo'lmadi (endpoint mavjud emas), bloklamaymiz.
+ */
+export async function fetchApiKeyRestrictions(apiKey: string, apiSecret: string): Promise<ApiKeyRestrictions | null> {
+  if (env.exchangeMode !== "live") return null;
+  try {
+    const data = await withRateLimit(`binance:${apiKey}`, () =>
+      signedRequest("/sapi/v1/account/apiRestrictions", "GET", apiKey, apiSecret)
+    );
+    return {
+      withdrawalsEnabled: !!data?.enableWithdrawals,
+      spotTradingEnabled: !!data?.enableSpotAndMarginTrading,
+      futuresEnabled: !!data?.enableFutures,
+    };
+  } catch (err) {
+    console.warn("[Binance] API kalit ruxsatlarini tekshirib bo'lmadi:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export interface BinanceOrderFill {
   price: string;
   qty: string;

@@ -2,7 +2,7 @@ import { PlanType, SignalDirection, SignalStatus } from "../constants/enums";
 import { prisma } from "../utils/prisma";
 import { decryptSecret } from "../utils/crypto";
 import { env } from "../utils/env";
-import { exchangeMode, fetchSpotPrice, floorToStep } from "./exchanges/binance";
+import { exchangeMode, floorToStep } from "./exchanges/binance";
 import {
   futuresAvailableUsdt,
   futuresCancelAllOrders,
@@ -17,6 +17,7 @@ import {
 } from "./exchanges/binanceFutures";
 import { ExchangeAdapter, ExchangeCredentials, getExchangeAdapter, isRealExchangeIntegrated } from "./exchanges/registry";
 import { notifyUser } from "./notifier";
+import { getCachedPrice, getPrice, startPriceFeed, stopPriceFeed } from "./priceFeed";
 import { PLAN_LIMITS } from "./planLimits";
 import { isAiEnginePaused } from "./platformSettings";
 import {
@@ -118,7 +119,7 @@ export async function evaluateOpenSignals() {
 
     let currentPrice: number;
     try {
-      currentPrice = await fetchSpotPrice(signal.symbol);
+      currentPrice = await getPrice(signal.symbol);
     } catch {
       continue; // Narxni olish imkonsiz bo'lsa, keyingi siklga qoldirish
     }
@@ -326,18 +327,24 @@ async function syncFuturesTrades() {
  * Birja tomonidagi himoyalar (spot OCO / futures) yangi SL bilan qayta
  * joylashtiriladi.
  */
-async function manageOpenTrades() {
+async function manageOpenTrades(options: { cacheOnly?: boolean } = {}) {
   const trades = await prisma.trade.findMany({
     where: { status: "OPEN", stopLossPrice: { not: null }, takeProfitPrice: { not: null } },
     include: { brokerAccount: true, signal: true },
   });
   if (trades.length === 0) return;
 
-  // Har simvol uchun narxni bir marta olish
+  // Har simvol uchun narxni bir marta olish. cacheOnly rejimida (tezkor
+  // himoya sikli, 10s) faqat WebSocket keshi ishlatiladi — REST so'rov yo'q
   const prices = new Map<string, number>();
   for (const symbol of new Set(trades.map((t) => t.symbol))) {
+    if (options.cacheOnly) {
+      const cached = getCachedPrice(symbol);
+      if (cached !== null) prices.set(symbol, cached);
+      continue;
+    }
     try {
-      prices.set(symbol, await fetchSpotPrice(symbol));
+      prices.set(symbol, await getPrice(symbol));
     } catch {
       // narx olinmasa bu simvol savdolari keyingi siklda boshqariladi
     }
@@ -863,7 +870,7 @@ async function openRealExchangeTrade(
   // bo'lsa, eskirgan narxda kirish — yutqazuvchi o'yin
   let currentPrice = signal.entryPrice;
   try {
-    currentPrice = await adapter.fetchPrice(signal.symbol);
+    currentPrice = getCachedPrice(signal.symbol) ?? (await adapter.fetchPrice(signal.symbol));
   } catch {
     // narx olinmasa signal narxi bilan davom etamiz
   }
@@ -975,7 +982,7 @@ async function openFuturesTrade(
   // Kirish dolzarbligini tekshirish
   let currentPrice = signal.entryPrice;
   try {
-    currentPrice = await fetchSpotPrice(signal.symbol);
+    currentPrice = await getPrice(signal.symbol);
   } catch {
     // narx olinmasa signal narxi bilan davom etamiz
   }
@@ -1128,14 +1135,41 @@ export async function runAiCycle() {
 }
 
 let intervalHandle: NodeJS.Timeout | null = null;
+let fastGuardHandle: NodeJS.Timeout | null = null;
+let fastGuardRunning = false;
+
+/**
+ * Tezkor himoya sikli (10s): WebSocket keshdagi real-vaqt narxlar bilan
+ * himoyasiz (birja OCO/TP-SL'siz) pozitsiyalarni tekshiradi va break-even/
+ * trailing'ni tezroq qo'llaydi. REST so'rov ishlatmaydi — rate-limit xavfsiz.
+ */
+async function runFastGuard() {
+  if (fastGuardRunning) return;
+  fastGuardRunning = true;
+  try {
+    await manageOpenTrades({ cacheOnly: true });
+  } catch (err) {
+    console.error("[AI Engine] Fast guard xatosi:", err instanceof Error ? err.message : err);
+  } finally {
+    fastGuardRunning = false;
+  }
+}
 
 export function startAiEngine(intervalMs = 60_000) {
   if (intervalHandle) return;
   console.log(`AI Engine ishga tushdi (har ${intervalMs / 1000}s da bozorni tahlil qiladi, birja rejimi: ${exchangeMode().toUpperCase()})`);
+
+  // Real-vaqt narx oqimi (WebSocket) — TP/SL aniqligi uchun
+  startPriceFeed(SYMBOLS);
+
   runAiCycle().catch((err) => console.error("AI cycle error:", err));
   intervalHandle = setInterval(() => {
     runAiCycle().catch((err) => console.error("AI cycle error:", err));
   }, intervalMs);
+
+  fastGuardHandle = setInterval(() => {
+    void runFastGuard();
+  }, 10_000);
 }
 
 export function stopAiEngine() {
@@ -1143,4 +1177,9 @@ export function stopAiEngine() {
     clearInterval(intervalHandle);
     intervalHandle = null;
   }
+  if (fastGuardHandle) {
+    clearInterval(fastGuardHandle);
+    fastGuardHandle = null;
+  }
+  stopPriceFeed();
 }

@@ -5,6 +5,7 @@ import { AuthedRequest } from "../middleware/auth";
 import { fetchSpotPrice } from "../services/exchanges/binance";
 import { getExchangeAdapter } from "../services/exchanges/registry";
 import { closeFuturesTradeAndRecord, decryptCredentials, recordRealTradeClose } from "../services/aiEngine";
+import { computePerformance } from "../services/performance";
 
 export const listMyTrades = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const trades = await prisma.trade.findMany({
@@ -42,6 +43,37 @@ export const myPortfolioSummary = asyncHandler(async (req: AuthedRequest, res: R
     winRate,
     accountsCount: accounts.length,
   });
+});
+
+/**
+ * Professional statistika: equity curve, max drawdown, profit factor,
+ * Sharpe, oylik PnL, simvollar kesimi — yopilgan savdolar asosida.
+ */
+export const myPerformance = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const userId = req.user!.id;
+
+  const [closedTrades, accounts] = await Promise.all([
+    prisma.trade.findMany({
+      where: { userId, status: "CLOSED", closedAt: { not: null }, pnlUsd: { not: null } },
+      select: { closedAt: true, pnlUsd: true, feeUsd: true, symbol: true, direction: true },
+      orderBy: { closedAt: "asc" },
+    }),
+    prisma.brokerAccount.findMany({ where: { userId }, select: { balanceUsd: true } }),
+  ]);
+
+  const currentBalance = accounts.reduce((s, a) => s + a.balanceUsd, 0);
+  const stats = computePerformance(
+    closedTrades.map((t) => ({
+      closedAt: t.closedAt!,
+      pnlUsd: t.pnlUsd!,
+      feeUsd: t.feeUsd,
+      symbol: t.symbol,
+      direction: t.direction,
+    })),
+    currentBalance
+  );
+
+  res.json({ performance: stats });
 });
 
 /** Manually close an open trade — real exchange SELL or simulated market close */
