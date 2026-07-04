@@ -55,6 +55,23 @@ async function publicGet(path: string, params: Record<string, string> = {}): Pro
   return data;
 }
 
+/**
+ * Ommaviy BOZOR MA'LUMOTLARI uchun so'rov — savdo muhitidan (testnet/live)
+ * qat'i nazar HAQIQIY bozor narxlari ishlatiladi: testnet order-book yupqa
+ * va noaniq, tahlil esa real bozorga asoslanishi kerak. Geo-blok holatida
+ * BINANCE_PUBLIC_API env bilan data-api.binance.vision'ga o'tkaziladi.
+ */
+async function publicDataGet(path: string, params: Record<string, string> = {}): Promise<any> {
+  const query = new URLSearchParams(params).toString();
+  const url = `${env.binancePublicApiBase}${path}${query ? `?${query}` : ""}`;
+  const res = await fetch(url);
+  const data: any = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new BinanceApiError(data?.msg ?? `Binance ma'lumot so'rovi muvaffaqiyatsiz (HTTP ${res.status})`, res.status, data?.code);
+  }
+  return data;
+}
+
 function buildQuery(params: Record<string, string | number>): string {
   const entries = Object.entries(params).map(([key, value]) => [key, String(value)] as [string, string]);
   return new URLSearchParams(entries).toString();
@@ -99,7 +116,7 @@ async function signedRequest(
 export async function fetchSpreadPct(symbol: string): Promise<number | null> {
   try {
     return await withRateLimit("binance:public", async () => {
-      const data = await publicGet("/api/v3/ticker/bookTicker", { symbol: toBinanceSymbol(symbol) });
+      const data = await publicDataGet("/api/v3/ticker/bookTicker", { symbol: toBinanceSymbol(symbol) });
       const bid = Number(data?.bidPrice);
       const ask = Number(data?.askPrice);
       if (!(bid > 0) || !(ask > 0) || ask < bid) return null;
@@ -116,7 +133,7 @@ export const MAX_ENTRY_SPREAD_PCT = 0.5;
 /** Joriy bozor narxini Binance'ning ommaviy (autentifikatsiyasiz) endpointidan olish */
 export async function fetchSpotPrice(symbol: string): Promise<number> {
   return withRateLimit("binance:public", async () => {
-    const data = await publicGet("/api/v3/ticker/price", { symbol: toBinanceSymbol(symbol) });
+    const data = await publicDataGet("/api/v3/ticker/price", { symbol: toBinanceSymbol(symbol) });
     const price = Number(data?.price);
     if (!Number.isFinite(price) || price <= 0) {
       throw new BinanceApiError("Binance noto'g'ri narx qaytardi", 502);

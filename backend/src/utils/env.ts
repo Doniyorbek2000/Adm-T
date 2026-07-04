@@ -28,6 +28,12 @@ export const env = {
   // operatsion jamoa tomonidan ongli ravishda "live" ga o'rnatilishi shart.
   exchangeMode: (process.env.EXCHANGE_MODE === "live" ? "live" : "testnet") as "testnet" | "live",
 
+  // Ommaviy bozor ma'lumotlari (klines, narx, spread) manbasi. Standart:
+  // api.binance.com. Agar server mintaqasi geo-blok (HTTP 451) olsa,
+  // Binance'ning rasmiy ma'lumot ko'zgusini qo'ying:
+  //   BINANCE_PUBLIC_API=https://data-api.binance.vision
+  binancePublicApiBase: process.env.BINANCE_PUBLIC_API ?? "https://api.binance.com",
+
   // To'lov tizimi: "test" (simulyatsiya, darhol faollashadi),
   // "click" (Click.uz), yoki "payme" (Payme.uz)
   paymentMode: (process.env.PAYMENT_MODE ?? "test") as "test" | "click" | "payme",

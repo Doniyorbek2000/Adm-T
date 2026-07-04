@@ -58,7 +58,20 @@ function minPlanForConfidence(confidence: number): PlanType {
  * tasdig'idan foydalanadi. Tasodifiy emas — real bozor ma'lumotlariga asoslangan.
  */
 export async function generateSignal() {
-  const result = await findBestSignal(SYMBOLS);
+  // Bir simvolga bir vaqtda faqat BITTA faol signal — shartlar saqlanib
+  // turganda har siklda takroriy signal yaratilmasligi uchun
+  const activeSignals = await prisma.signal.findMany({
+    where: { status: SignalStatus.ACTIVE },
+    select: { symbol: true },
+  });
+  const activeSymbols = new Set(activeSignals.map((s) => s.symbol));
+  const candidates = SYMBOLS.filter((s) => !activeSymbols.has(s));
+  if (candidates.length === 0) {
+    console.log("[AI Engine] Barcha juftliklarda faol signal bor — yangi tahlil o'tkazilmadi");
+    return null;
+  }
+
+  const result = await findBestSignal(candidates);
 
   // Agar hech qanday kuchli signal topilmasa — null qaytarish (bu siklda signal yaratilmaydi)
   if (!result) {

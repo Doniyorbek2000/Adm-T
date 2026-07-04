@@ -22,9 +22,11 @@
  * SL = kirish narxi - 1×ATR (BUY uchun)   → Risk:Reward ≈ 1:2
  */
 
+import { env } from "../utils/env";
 import { withRateLimit } from "./exchanges/rateLimiter";
 
-const BINANCE_BASE = "https://api.binance.com";
+// Ommaviy bozor ma'lumotlari manbasi (geo-blok bo'lsa data-api.binance.vision)
+const BINANCE_BASE = env.binancePublicApiBase;
 
 // ─── OHLCV ma'lumotlarini Binance'dan olish ─────────────────────────────────
 
