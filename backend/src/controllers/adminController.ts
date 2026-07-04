@@ -5,6 +5,8 @@ import { prisma } from "../utils/prisma";
 import { AppError, asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { generateSignal } from "../services/aiEngine";
+import { exchangeMode } from "../services/exchanges/binance";
+import { isAiEnginePaused, setAiEnginePaused } from "../services/platformSettings";
 
 /* -------------------------------------------------------------------------- */
 /* Dashboard statistikasi                                                      */
@@ -55,6 +57,27 @@ export const dashboardStats = asyncHandler(async (_req: AuthedRequest, res: Resp
     totalRevenueUsd: Number((revenueAgg._sum.amountUsd ?? 0).toFixed(2)),
     recentUsers,
   });
+});
+
+/* -------------------------------------------------------------------------- */
+/* AI dvigatel kill-switch                                                     */
+/* -------------------------------------------------------------------------- */
+
+export const getEngineStatus = asyncHandler(async (_req: AuthedRequest, res: Response) => {
+  res.json({ paused: await isAiEnginePaused(), exchangeMode: exchangeMode() });
+});
+
+const engineStatusSchema = z.object({ paused: z.boolean() });
+
+/**
+ * Favqulodda to'xtatish: paused=true bo'lsa AI yangi signal yaratmaydi va
+ * yangi savdo ochmaydi. Ochiq pozitsiyalarni kuzatish/yopish davom etadi.
+ */
+export const updateEngineStatus = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const { paused } = engineStatusSchema.parse(req.body);
+  await setAiEnginePaused(paused);
+  console.warn(`[Admin] AI dvigatel ${paused ? "TO'XTATILDI (kill-switch)" : "qayta yoqildi"} — ${req.user!.email}`);
+  res.json({ paused });
 });
 
 /* -------------------------------------------------------------------------- */

@@ -1,4 +1,13 @@
-import { averageFillPrice, fetchSpotPrice, fetchUsdtBalance, placeMarketOrder } from "./binance";
+import {
+  averageFillPrice,
+  cancelOcoOrder,
+  fetchOcoStatus,
+  fetchSpotPrice,
+  fetchUsdtBalance,
+  placeMarketOrder,
+  placeOcoSell,
+  sellableQuantity,
+} from "./binance";
 import { bingxAdapter } from "./bingx";
 import { bybitAdapter } from "./bybit";
 import { kucoinAdapter } from "./kucoin";
@@ -15,12 +24,34 @@ const binanceAdapter: ExchangeAdapter = {
   fetchQuoteBalance: (creds) => fetchUsdtBalance(creds.apiKey, creds.apiSecret),
   placeMarketBuy: async (creds, symbol, quoteAmount): Promise<OrderResult> => {
     const order = await placeMarketOrder({ apiKey: creds.apiKey, apiSecret: creds.apiSecret, symbol, side: "BUY", quoteOrderQty: quoteAmount });
-    return { orderId: String(order.orderId), executedQty: Number(order.executedQty), avgPrice: averageFillPrice(order.fills) };
+    const executedQty = Number(order.executedQty);
+    const baseAsset = symbol.split("/")[0];
+    return {
+      orderId: String(order.orderId),
+      executedQty,
+      avgPrice: averageFillPrice(order.fills),
+      sellableQty: sellableQuantity(executedQty, order.fills, baseAsset),
+    };
   },
   placeMarketSell: async (creds, symbol, baseQuantity): Promise<OrderResult> => {
     const order = await placeMarketOrder({ apiKey: creds.apiKey, apiSecret: creds.apiSecret, symbol, side: "SELL", quantity: baseQuantity });
     return { orderId: String(order.orderId), executedQty: Number(order.executedQty), avgPrice: averageFillPrice(order.fills) };
   },
+  placeProtectiveOrders: async (creds, symbol, quantity, takeProfit, stopLoss) => {
+    const result = await placeOcoSell({
+      apiKey: creds.apiKey,
+      apiSecret: creds.apiSecret,
+      symbol,
+      quantity,
+      takeProfit,
+      stopLoss,
+    });
+    return { listId: result.orderListId, quantity: result.quantity };
+  },
+  fetchProtectiveStatus: (creds, symbol, listId) =>
+    fetchOcoStatus(creds.apiKey, creds.apiSecret, symbol, listId),
+  cancelProtectiveOrders: (creds, symbol, listId) =>
+    cancelOcoOrder(creds.apiKey, creds.apiSecret, symbol, listId),
 };
 
 /**

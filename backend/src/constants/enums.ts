@@ -18,6 +18,8 @@ export const SignalStatus = {
   TP_HIT: "TP_HIT",
   SL_HIT: "SL_HIT",
   CLOSED: "CLOSED",
+  /** 48 soat ichida TP/SL ga yetmagan — joriy narxda majburiy yopilgan (win-rate statistikasini buzmaslik uchun alohida) */
+  EXPIRED: "EXPIRED",
 } as const;
 export type SignalStatus = (typeof SignalStatus)[keyof typeof SignalStatus];
 

@@ -44,6 +44,7 @@ const ru: Record<TranslationKey, string> = {
   "sidebar.signals": "ИИ-сигналы",
   "sidebar.accounts": "Мои счета",
   "sidebar.trades": "История сделок",
+  "sidebar.stats": "Статистика",
   "sidebar.subscription": "Тариф / Подписка",
   "sidebar.notifications": "Уведомления",
   "sidebar.support": "Поддержка",
@@ -298,6 +299,30 @@ const ru: Record<TranslationKey, string> = {
   "dash.support.placeholder": "Введите сообщение...",
   "dash.support.error": "Не удалось отправить сообщение",
 
+  // Страница статистики
+  "stats.title": "Статистика торговли",
+  "stats.subtitle": "Профессиональные метрики на основе ваших закрытых сделок.",
+  "stats.empty": "Закрытых сделок пока нет. Статистика появится, когда ИИ закроет первые сделки.",
+  "stats.totalPnl": "Общий PnL",
+  "stats.winRate": "Процент побед",
+  "stats.tradesSuffix": "сделок",
+  "stats.profitFactor": "Профит-фактор",
+  "stats.profitFactorHint": "Валовая прибыль / валовой убыток (>1.5 — хорошо)",
+  "stats.maxDrawdown": "Макс. просадка",
+  "stats.expectancy": "Матожидание",
+  "stats.expectancyHint": "Средний результат на сделку",
+  "stats.sharpe": "Коэффициент Шарпа",
+  "stats.sharpeHint": "Доходность с поправкой на риск (годовая)",
+  "stats.avgWinLoss": "Ср. прибыль / убыток",
+  "stats.fees": "Все комиссии",
+  "stats.equityTitle": "Кривая капитала",
+  "stats.equityStart": "Начальный капитал",
+  "stats.monthlyTitle": "PnL по месяцам",
+  "stats.bySymbolTitle": "По инструментам",
+  "stats.colSymbol": "Инструмент",
+  "stats.colTrades": "Сделки",
+  "stats.colWinRate": "Победы %",
+
   // Admin - overview
   "admin.overview.title": "Панель администратора",
   "admin.overview.subtitle": "Общее состояние и статистика платформы ADM Trading.",
@@ -313,6 +338,15 @@ const ru: Record<TranslationKey, string> = {
   "admin.overview.usersSuffix": "польз.",
   "admin.overview.recentTitle": "Недавно зарегистрированные",
   "admin.overview.noUsers": "Пользователей пока нет.",
+
+  // Admin - AI kill-switch
+  "admin.engine.title": "AI торговый движок",
+  "admin.engine.desc": "Экстренная остановка: пауза блокирует все НОВЫЕ сигналы и авто-сделки. Мониторинг и закрытие открытых позиций продолжается.",
+  "admin.engine.statusRunning": "Работает",
+  "admin.engine.statusPaused": "ОСТАНОВЛЕН",
+  "admin.engine.mode": "Режим биржи",
+  "admin.engine.pauseBtn": "Экстренная остановка",
+  "admin.engine.resumeBtn": "Возобновить движок",
 
   // Admin - users
   "admin.users.title": "Пользователи",

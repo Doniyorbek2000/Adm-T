@@ -44,6 +44,7 @@ const uz: Record<TranslationKey, string> = {
   "sidebar.signals": "AI signallari",
   "sidebar.accounts": "Mening hisoblarim",
   "sidebar.trades": "Savdolar tarixi",
+  "sidebar.stats": "Statistika",
   "sidebar.subscription": "Tarif / Obuna",
   "sidebar.notifications": "Bildirishnomalar",
   "sidebar.support": "Yordam",
@@ -298,6 +299,30 @@ const uz: Record<TranslationKey, string> = {
   "dash.support.placeholder": "Xabaringizni shu yerga yozing...",
   "dash.support.error": "Xabarni yuborib bo'lmadi",
 
+  // Statistika sahifasi
+  "stats.title": "Savdo statistikasi",
+  "stats.subtitle": "Yopilgan savdolaringiz asosidagi professional ko'rsatkichlar.",
+  "stats.empty": "Hozircha yopilgan savdolar yo'q. AI birinchi savdolarni yopgach, statistika shu yerda paydo bo'ladi.",
+  "stats.totalPnl": "Umumiy PnL",
+  "stats.winRate": "G'alaba foizi",
+  "stats.tradesSuffix": "savdo",
+  "stats.profitFactor": "Profit factor",
+  "stats.profitFactorHint": "Yalpi foyda / yalpi zarar (>1.5 — yaxshi)",
+  "stats.maxDrawdown": "Maksimal drawdown",
+  "stats.expectancy": "Kutilma",
+  "stats.expectancyHint": "Har savdodan o'rtacha natija",
+  "stats.sharpe": "Sharpe koeffitsienti",
+  "stats.sharpeHint": "Riskga nisbatan daromad (yillik)",
+  "stats.avgWinLoss": "O'rt. foyda / zarar",
+  "stats.fees": "Jami komissiyalar",
+  "stats.equityTitle": "Kapital egri chizig'i",
+  "stats.equityStart": "Boshlang'ich kapital",
+  "stats.monthlyTitle": "Oylik PnL",
+  "stats.bySymbolTitle": "Juftliklar kesimida",
+  "stats.colSymbol": "Juftlik",
+  "stats.colTrades": "Savdolar",
+  "stats.colWinRate": "G'alaba %",
+
   // Admin - overview
   "admin.overview.title": "Admin paneli",
   "admin.overview.subtitle": "ADM Trading platformasining umumiy holati va statistikasi.",
@@ -313,6 +338,15 @@ const uz: Record<TranslationKey, string> = {
   "admin.overview.usersSuffix": "foydalanuvchi",
   "admin.overview.recentTitle": "Yaqinda ro'yxatdan o'tganlar",
   "admin.overview.noUsers": "Hozircha foydalanuvchilar yo'q.",
+
+  // Admin - AI dvigatel kill-switch
+  "admin.engine.title": "AI treding dvigateli",
+  "admin.engine.desc": "Favqulodda to'xtatish: pauza barcha YANGI signal va avto-savdolarni bloklaydi. Ochiq pozitsiyalarni kuzatish va yopish davom etadi.",
+  "admin.engine.statusRunning": "Ishlamoqda",
+  "admin.engine.statusPaused": "TO'XTATILGAN",
+  "admin.engine.mode": "Birja rejimi",
+  "admin.engine.pauseBtn": "Favqulodda to'xtatish",
+  "admin.engine.resumeBtn": "Dvigatelni yoqish",
 
   // Admin - users
   "admin.users.title": "Foydalanuvchilar",

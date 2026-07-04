@@ -47,6 +47,7 @@ const en = {
   "sidebar.signals": "AI signals",
   "sidebar.accounts": "My accounts",
   "sidebar.trades": "Trade history",
+  "sidebar.stats": "Statistics",
   "sidebar.subscription": "Plan / Subscription",
   "sidebar.notifications": "Notifications",
   "sidebar.support": "Support",
@@ -301,6 +302,30 @@ const en = {
   "dash.support.placeholder": "Type your message here...",
   "dash.support.error": "Failed to send the message",
 
+  // Stats page
+  "stats.title": "Trading statistics",
+  "stats.subtitle": "Professional performance metrics based on your closed trades.",
+  "stats.empty": "No closed trades yet. Statistics will appear once the AI closes its first trades.",
+  "stats.totalPnl": "Total PnL",
+  "stats.winRate": "Win rate",
+  "stats.tradesSuffix": "trades",
+  "stats.profitFactor": "Profit factor",
+  "stats.profitFactorHint": "Gross profit / gross loss (>1.5 is good)",
+  "stats.maxDrawdown": "Max drawdown",
+  "stats.expectancy": "Expectancy",
+  "stats.expectancyHint": "Average result per trade",
+  "stats.sharpe": "Sharpe ratio",
+  "stats.sharpeHint": "Risk-adjusted return (annualized)",
+  "stats.avgWinLoss": "Avg win / loss",
+  "stats.fees": "Total fees",
+  "stats.equityTitle": "Equity curve",
+  "stats.equityStart": "Starting capital",
+  "stats.monthlyTitle": "Monthly PnL",
+  "stats.bySymbolTitle": "By symbol",
+  "stats.colSymbol": "Symbol",
+  "stats.colTrades": "Trades",
+  "stats.colWinRate": "Win rate",
+
   // Admin - overview
   "admin.overview.title": "Admin dashboard",
   "admin.overview.subtitle": "Overall status and statistics for the ADM Trading platform.",
@@ -316,6 +341,15 @@ const en = {
   "admin.overview.usersSuffix": "users",
   "admin.overview.recentTitle": "Recently registered",
   "admin.overview.noUsers": "No users yet.",
+
+  // Admin - AI engine kill-switch
+  "admin.engine.title": "AI trading engine",
+  "admin.engine.desc": "Emergency stop: pausing blocks all NEW signals and auto-trades. Monitoring and closing of open positions continues.",
+  "admin.engine.statusRunning": "Running",
+  "admin.engine.statusPaused": "PAUSED",
+  "admin.engine.mode": "Exchange mode",
+  "admin.engine.pauseBtn": "Emergency stop",
+  "admin.engine.resumeBtn": "Resume engine",
 
   // Admin - users
   "admin.users.title": "Users",

@@ -19,6 +19,7 @@ const USER_NAV: NavItem[] = [
   { href: "/dashboard/signals", labelKey: "sidebar.signals", icon: "📡" },
   { href: "/dashboard/accounts", labelKey: "sidebar.accounts", icon: "🔗" },
   { href: "/dashboard/trades", labelKey: "sidebar.trades", icon: "📈" },
+  { href: "/dashboard/stats", labelKey: "sidebar.stats", icon: "📉" },
   { href: "/dashboard/notifications", labelKey: "sidebar.notifications", icon: "🔔" },
   { href: "/dashboard/support", labelKey: "sidebar.support", icon: "💬" },
 ];

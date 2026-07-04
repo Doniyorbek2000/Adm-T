@@ -44,6 +44,7 @@ model BrokerAccount {
   server             String? // faqat MT5 uchun: broker server nomi (masalan, Exness-MT5Real)
   isConnected        Boolean  @default(true)
   mode               String   @default("SIGNAL_ONLY") // SIGNAL_ONLY | AUTO_TRADE
+  marketType         String   @default("SPOT") // SPOT | FUTURES — FUTURES faqat Binance uchun: SELL signallarda short ochish imkonini beradi
   riskLevel          Int      @default(2) // 1 - past, 2 - o'rta, 3 - yuqori
   balanceUsd         Float    @default(0)
   createdAt          DateTime @default(now())
@@ -62,7 +63,7 @@ model Signal {
   confidence   Int // AI ishonch darajasi 0-100
   analysis     String // AI tahlil matni
   minPlan      String    @default("FREE") // signalni ko'rish uchun minimal tarif: FREE | PRO | ULTRA | VIP
-  status       String    @default("ACTIVE") // ACTIVE | TP_HIT | SL_HIT | CLOSED
+  status       String    @default("ACTIVE") // ACTIVE | TP_HIT | SL_HIT | CLOSED | EXPIRED (48h ichida TP/SL'ga yetmagan)
   resultPnlPct Float? // yopilgandan keyingi natija (% da)
   createdAt    DateTime  @default(now())
   closedAt     DateTime?
@@ -89,6 +90,12 @@ model Trade {
   executedByAi    Boolean        @default(true)
   executionMode   String         @default("SIMULATED") // SIMULATED | TESTNET | LIVE - savdo qanday muhitda bajarilgani
   externalOrderId String? // ulangan birjadagi haqiqiy buyurtma ID (TESTNET/LIVE uchun, audit va solishtirish maqsadida)
+  ocoOrderListId  String? // himoya buyurtmalari ID: spot'da OCO listId, futures'da "F:tpOrderId:slOrderId" formati
+  feeUsd          Float? // savdo komissiyasi (USD) — PnL'dan alohida hisobga olinadi
+  marketType      String  @default("SPOT") // SPOT | FUTURES
+  stopLossPrice   Float? // savdoning JORIY stop-loss darajasi (break-even/trailing bilan yangilanadi)
+  takeProfitPrice Float? // savdoning take-profit darajasi
+  breakEvenApplied Boolean @default(false) // SL zararsiz nuqtaga ko'chirilganmi (1R foydadan keyin)
   openedAt        DateTime       @default(now())
   closedAt        DateTime?
 }
@@ -114,6 +121,8 @@ model Payment {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan        String // FREE | PRO | ULTRA | VIP
   amountUsd   Float
+  amountUzs   Int? // to'lov yaratilgan paytdagi kurs bo'yicha qat'iy UZS summa — webhook shu summani tekshiradi
+  providerTransId String? // Click/Payme tomonidagi tranzaksiya ID (audit va takroriy so'rovlarni aniqlash uchun)
   status      String   @default("PENDING") // PENDING | PAID | FAILED | CANCELED
   method      String   @default("card") // card, crypto, ...
   periodStart DateTime @default(now())
@@ -131,6 +140,13 @@ model SupportMessage {
   body       String
   isRead     Boolean  @default(false)
   createdAt  DateTime @default(now())
+}
+
+// Platforma darajasidagi sozlamalar (masalan, AI dvigatelni to'xtatuvchi kill-switch)
+model PlatformSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 // Foydalanuvchiga tizim xabarnomalari (signal, to'lov, tizim yangilanishi va h.k.)

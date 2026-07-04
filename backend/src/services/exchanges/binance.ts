@@ -62,7 +62,7 @@ function buildQuery(params: Record<string, string | number>): string {
 
 async function signedRequest(
   path: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   apiKey: string,
   apiSecret: string,
   params: Record<string, string | number> = {}
@@ -119,9 +119,40 @@ export async function fetchUsdtBalance(apiKey: string, apiSecret: string): Promi
   });
 }
 
+export interface ApiKeyRestrictions {
+  withdrawalsEnabled: boolean;
+  spotTradingEnabled: boolean;
+  futuresEnabled: boolean;
+}
+
+/**
+ * API kalit ruxsatlarini tekshirish (faqat live rejimda mavjud — testnet'da
+ * sapi endpointlari yo'q). Pul yechish (withdrawal) yoqilgan kalit trading
+ * botiga ULANMASLIGI kerak: bot buzilsa ham mablag' yechib bo'lmasin.
+ * null — tekshirib bo'lmadi (endpoint mavjud emas), bloklamaymiz.
+ */
+export async function fetchApiKeyRestrictions(apiKey: string, apiSecret: string): Promise<ApiKeyRestrictions | null> {
+  if (env.exchangeMode !== "live") return null;
+  try {
+    const data = await withRateLimit(`binance:${apiKey}`, () =>
+      signedRequest("/sapi/v1/account/apiRestrictions", "GET", apiKey, apiSecret)
+    );
+    return {
+      withdrawalsEnabled: !!data?.enableWithdrawals,
+      spotTradingEnabled: !!data?.enableSpotAndMarginTrading,
+      futuresEnabled: !!data?.enableFutures,
+    };
+  } catch (err) {
+    console.warn("[Binance] API kalit ruxsatlarini tekshirib bo'lmadi:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export interface BinanceOrderFill {
   price: string;
   qty: string;
+  commission?: string;
+  commissionAsset?: string;
 }
 
 export interface BinanceOrderResult {
@@ -165,6 +196,191 @@ export async function placeMarketOrder(params: {
   return withRateLimit(`binance:${params.apiKey}`, () =>
     signedRequest("/api/v3/order", "POST", params.apiKey, params.apiSecret, orderParams)
   );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Himoya (OCO) buyurtmalari — TP va SL birjaning O'ZIDA turadi, shu sababli
+ * server o'chib qolsa ham pozitsiya himoyasiz qolmaydi.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface SymbolFilters {
+  tickSize: number; // narx qadami (PRICE_FILTER)
+  stepSize: number; // miqdor qadami (LOT_SIZE)
+  minNotional: number; // minimal buyurtma qiymati (USDT)
+}
+
+const filtersCache = new Map<string, { filters: SymbolFilters; fetchedAt: number }>();
+const FILTERS_TTL_MS = 12 * 60 * 60 * 1000;
+
+/** Binance exchangeInfo'dan simvolning narx/miqdor qadamlarini olish (keshlangan) */
+export async function getSymbolFilters(symbol: string): Promise<SymbolFilters> {
+  const binanceSymbol = toBinanceSymbol(symbol);
+  const cached = filtersCache.get(binanceSymbol);
+  if (cached && Date.now() - cached.fetchedAt < FILTERS_TTL_MS) return cached.filters;
+
+  const data = await withRateLimit("binance:public", () =>
+    publicGet("/api/v3/exchangeInfo", { symbol: binanceSymbol })
+  );
+  const info = data?.symbols?.[0];
+  if (!info) throw new BinanceApiError(`${symbol} uchun exchangeInfo topilmadi`, 502);
+
+  const priceFilter = info.filters?.find((f: any) => f.filterType === "PRICE_FILTER");
+  const lotFilter = info.filters?.find((f: any) => f.filterType === "LOT_SIZE");
+  const notionalFilter = info.filters?.find((f: any) => f.filterType === "NOTIONAL" || f.filterType === "MIN_NOTIONAL");
+
+  const filters: SymbolFilters = {
+    tickSize: Number(priceFilter?.tickSize) || 0.00000001,
+    stepSize: Number(lotFilter?.stepSize) || 0.00000001,
+    minNotional: Number(notionalFilter?.minNotional) || 5,
+  };
+  filtersCache.set(binanceSymbol, { filters, fetchedAt: Date.now() });
+  return filters;
+}
+
+/**
+ * Qiymatni berilgan qadamga PASTGA yaxlitlash (floating-point xatolarisiz).
+ * Binance qadam talabiga mos kelmagan narx/miqdorni rad etadi.
+ */
+export function floorToStep(value: number, step: number): number {
+  if (step <= 0) return value;
+  const precision = Math.max(0, Math.round(-Math.log10(step)));
+  // Kichik epsilon nisbatga qo'shiladi — 2.675/0.001 = 2674.9999... kabi
+  // floating-point xatolari noto'g'ri pastga yaxlitlanib ketmasligi uchun
+  const floored = Math.floor(value / step + 1e-9) * step;
+  return Number(floored.toFixed(precision));
+}
+
+/**
+ * Market BUY'dan keyin real sotish mumkin bo'lgan miqdor: bajarilgan miqdordan
+ * asosiy aktivda ushlab qolingan komissiya ayiriladi (aks holda OCO SELL
+ * "insufficient balance" bilan rad etiladi).
+ */
+export function sellableQuantity(executedQty: number, fills: BinanceOrderFill[] | undefined, baseAsset: string): number {
+  if (!fills) return executedQty;
+  const baseCommission = fills.reduce((sum, f) => {
+    if (f.commissionAsset === baseAsset) return sum + (Number(f.commission) || 0);
+    return sum;
+  }, 0);
+  return Math.max(0, executedQty - baseCommission);
+}
+
+export interface OcoPlacementResult {
+  orderListId: string;
+  quantity: number;
+}
+
+/**
+ * Ochiq BUY pozitsiyasini himoyalash uchun OCO SELL joylashtiradi:
+ * TP — limit buyurtma, SL — stop-limit buyurtma. Bittasi bajarilsa,
+ * ikkinchisi avtomatik bekor bo'ladi (birja tomonida).
+ */
+export async function placeOcoSell(params: {
+  apiKey: string;
+  apiSecret: string;
+  symbol: string;
+  quantity: number;
+  takeProfit: number;
+  stopLoss: number;
+}): Promise<OcoPlacementResult> {
+  const filters = await getSymbolFilters(params.symbol);
+
+  const qty = floorToStep(params.quantity, filters.stepSize);
+  const tpPrice = floorToStep(params.takeProfit, filters.tickSize);
+  const slTrigger = floorToStep(params.stopLoss, filters.tickSize);
+  // Stop-limit narxi triggerdan biroz pastroq — tez tushishda ham bajarilishi uchun
+  const slLimit = floorToStep(params.stopLoss * 0.995, filters.tickSize);
+
+  if (qty <= 0 || qty * slLimit < filters.minNotional) {
+    throw new BinanceApiError(
+      `OCO uchun miqdor juda kichik (${qty} × ${slLimit} < minNotional ${filters.minNotional})`,
+      400
+    );
+  }
+
+  const data = await withRateLimit(`binance:${params.apiKey}`, () =>
+    signedRequest("/api/v3/order/oco", "POST", params.apiKey, params.apiSecret, {
+      symbol: toBinanceSymbol(params.symbol),
+      side: "SELL",
+      quantity: qty,
+      price: tpPrice,
+      stopPrice: slTrigger,
+      stopLimitPrice: slLimit,
+      stopLimitTimeInForce: "GTC",
+    })
+  );
+
+  if (data?.orderListId === undefined) {
+    throw new BinanceApiError("Binance OCO javobida orderListId yo'q", 502);
+  }
+  return { orderListId: String(data.orderListId), quantity: qty };
+}
+
+export interface OcoStatusResult {
+  /** OPEN — hali kutmoqda; FILLED — TP yoki SL bajarildi; CANCELED — bekor qilingan */
+  status: "OPEN" | "FILLED" | "CANCELED";
+  exitPrice: number | null;
+  executedQty: number;
+}
+
+/** OCO ro'yxati holatini tekshiradi; bajarilgan bo'lsa, real chiqish narxini qaytaradi */
+export async function fetchOcoStatus(
+  apiKey: string,
+  apiSecret: string,
+  symbol: string,
+  orderListId: string
+): Promise<OcoStatusResult> {
+  const list = await withRateLimit(`binance:${apiKey}`, () =>
+    signedRequest("/api/v3/orderList", "GET", apiKey, apiSecret, { orderListId })
+  );
+
+  const listStatus: string = list?.listOrderStatus ?? "EXECUTING";
+  if (listStatus === "EXECUTING") return { status: "OPEN", exitPrice: null, executedQty: 0 };
+
+  // ALL_DONE — qaysi oyoq (TP yoki SL) bajarilganini buyurtmalardan aniqlaymiz
+  const orders: Array<{ orderId: number }> = list?.orders ?? [];
+  const binanceSymbol = toBinanceSymbol(symbol);
+
+  for (const o of orders) {
+    const order = await withRateLimit(`binance:${apiKey}`, () =>
+      signedRequest("/api/v3/order", "GET", apiKey, apiSecret, { symbol: binanceSymbol, orderId: o.orderId })
+    );
+    const executedQty = Number(order?.executedQty) || 0;
+    if (order?.status === "FILLED" && executedQty > 0) {
+      const quote = Number(order?.cummulativeQuoteQty) || 0;
+      const exitPrice = quote > 0 ? Number((quote / executedQty).toFixed(8)) : Number(order?.price) || null;
+      return { status: "FILLED", exitPrice, executedQty };
+    }
+  }
+
+  // Hech bir oyoq to'ldirilmagan, lekin ro'yxat yakunlangan — bekor qilingan
+  return { status: "CANCELED", exitPrice: null, executedQty: 0 };
+}
+
+/**
+ * OCO'ni bekor qiladi (masalan, pozitsiyani qo'lda yopishdan oldin).
+ * "already_done" — OCO allaqachon bajarilgan/yakunlangan (bekor qilib bo'lmaydi).
+ */
+export async function cancelOcoOrder(
+  apiKey: string,
+  apiSecret: string,
+  symbol: string,
+  orderListId: string
+): Promise<"canceled" | "already_done"> {
+  try {
+    await withRateLimit(`binance:${apiKey}`, () =>
+      signedRequest("/api/v3/orderList", "DELETE", apiKey, apiSecret, {
+        symbol: toBinanceSymbol(symbol),
+        orderListId,
+      })
+    );
+    return "canceled";
+  } catch (err) {
+    if (err instanceof BinanceApiError && (err.code === -2011 || err.status === 400)) {
+      // -2011: Unknown order sent — allaqachon bajarilgan yoki bekor qilingan
+      return "already_done";
+    }
+    throw err;
+  }
 }
 
 /** Buyurtma to'ldirilishlaridan (fills) o'rtacha bajarilish narxini hisoblaydi */

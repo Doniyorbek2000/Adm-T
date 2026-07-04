@@ -4,7 +4,8 @@ import { asyncHandler } from "../utils/AppError";
 import { AuthedRequest } from "../middleware/auth";
 import { fetchSpotPrice } from "../services/exchanges/binance";
 import { getExchangeAdapter } from "../services/exchanges/registry";
-import { decryptCredentials } from "../services/aiEngine";
+import { closeFuturesTradeAndRecord, decryptCredentials, recordRealTradeClose } from "../services/aiEngine";
+import { computePerformance } from "../services/performance";
 
 export const listMyTrades = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const trades = await prisma.trade.findMany({
@@ -44,6 +45,37 @@ export const myPortfolioSummary = asyncHandler(async (req: AuthedRequest, res: R
   });
 });
 
+/**
+ * Professional statistika: equity curve, max drawdown, profit factor,
+ * Sharpe, oylik PnL, simvollar kesimi — yopilgan savdolar asosida.
+ */
+export const myPerformance = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const userId = req.user!.id;
+
+  const [closedTrades, accounts] = await Promise.all([
+    prisma.trade.findMany({
+      where: { userId, status: "CLOSED", closedAt: { not: null }, pnlUsd: { not: null } },
+      select: { closedAt: true, pnlUsd: true, feeUsd: true, symbol: true, direction: true },
+      orderBy: { closedAt: "asc" },
+    }),
+    prisma.brokerAccount.findMany({ where: { userId }, select: { balanceUsd: true } }),
+  ]);
+
+  const currentBalance = accounts.reduce((s, a) => s + a.balanceUsd, 0);
+  const stats = computePerformance(
+    closedTrades.map((t) => ({
+      closedAt: t.closedAt!,
+      pnlUsd: t.pnlUsd!,
+      feeUsd: t.feeUsd,
+      symbol: t.symbol,
+      direction: t.direction,
+    })),
+    currentBalance
+  );
+
+  res.json({ performance: stats });
+});
+
 /** Manually close an open trade — real exchange SELL or simulated market close */
 export const closeTrade = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const { id } = req.params;
@@ -55,6 +87,15 @@ export const closeTrade = asyncHandler(async (req: AuthedRequest, res: Response)
 
   if (!trade) {
     return res.status(404).json({ message: "Savdo topilmadi yoki allaqachon yopilgan" });
+  }
+
+  // Futures savdosi — alohida yopish yo'li (himoya tozalanadi, realized PnL yoziladi)
+  if (trade.marketType === "FUTURES" && trade.brokerAccount) {
+    const result = await closeFuturesTradeAndRecord(trade, trade.brokerAccount, "qo'lda yopildi");
+    if (!result) {
+      return res.status(502).json({ message: "Futures pozitsiyasini yopib bo'lmadi. Qayta urinib ko'ring yoki Binance'da tekshiring." });
+    }
+    return res.json({ success: true, exitPrice: result.exitPrice, pnlUsd: result.pnlUsd });
   }
 
   // Get current market price
@@ -79,27 +120,40 @@ export const closeTrade = asyncHandler(async (req: AuthedRequest, res: Response)
         return res.status(500).json({ message: "API kalitlarini o'qib bo'lmadi" });
       }
 
+      // Birja tomonidagi OCO (TP/SL) himoyasi bo'lsa — market-sell'dan oldin
+      // uni bekor qilamiz; allaqachon bajarilgan bo'lsa, o'sha natijani yozamiz
+      if (trade.ocoOrderListId && adapter.cancelProtectiveOrders && adapter.fetchProtectiveStatus) {
+        try {
+          const cancelResult = await adapter.cancelProtectiveOrders(creds, trade.symbol, trade.ocoOrderListId);
+          if (cancelResult === "already_done") {
+            const status = await adapter.fetchProtectiveStatus(creds, trade.symbol, trade.ocoOrderListId);
+            if (status.status === "FILLED") {
+              const result = await recordRealTradeClose(
+                trade, trade.brokerAccount, adapter, creds,
+                status.exitPrice ?? exitPrice,
+                status.executedQty > 0 ? status.executedQty : trade.quantity,
+                null,
+                "birja tomonidagi TP/SL allaqachon bajarilgan edi"
+              );
+              return res.json({ success: true, exitPrice: result.exitPrice, pnlUsd: result.pnlUsd });
+            }
+          }
+        } catch (err) {
+          return res.status(502).json({
+            message: `Himoya buyurtmasini bekor qilib bo'lmadi: ${err instanceof Error ? err.message : "Noma'lum xato"}. Qayta urinib ko'ring.`,
+          });
+        }
+      }
+
       try {
         const order = await adapter.placeMarketSell(creds, trade.symbol, trade.quantity);
         const realExit = order.avgPrice ?? exitPrice;
-        const grossPnl = (realExit - trade.entryPrice) * trade.quantity;
-        const feeUsd = realExit * trade.quantity * 0.002;
-        const pnlUsd = Number((grossPnl - feeUsd).toFixed(2));
-
-        await prisma.trade.update({
-          where: { id: trade.id },
-          data: { status: "CLOSED", exitPrice: realExit, pnlUsd, closedAt: new Date(), externalOrderId: order.orderId },
-        });
-
-        await prisma.notification.create({
-          data: {
-            userId: trade.userId,
-            title: "Pozitsiya qo'lda yopildi",
-            message: `${trade.symbol} savdosi qo'lda yopildi. Natija: ${pnlUsd >= 0 ? "+" : ""}${pnlUsd}$ (komissiya hisobga olingan)`,
-          },
-        });
-
-        return res.json({ success: true, exitPrice: realExit, pnlUsd });
+        const result = await recordRealTradeClose(
+          trade, trade.brokerAccount, adapter, creds,
+          realExit, trade.quantity, order.orderId,
+          "qo'lda yopildi"
+        );
+        return res.json({ success: true, exitPrice: result.exitPrice, pnlUsd: result.pnlUsd });
       } catch (err) {
         return res.status(502).json({
           message: `Birjaga buyurtma yuborib bo'lmadi: ${err instanceof Error ? err.message : "Noma'lum xato"}`,

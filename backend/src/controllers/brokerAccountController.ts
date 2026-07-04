@@ -7,7 +7,8 @@ import { AuthedRequest } from "../middleware/auth";
 import { encryptSecret, maskSecret } from "../utils/crypto";
 import { PLAN_LIMITS } from "../services/planLimits";
 import { ExchangeApiError, getExchangeAdapter } from "../services/exchanges/registry";
-import { exchangeMode } from "../services/exchanges/binance";
+import { exchangeMode, fetchApiKeyRestrictions } from "../services/exchanges/binance";
+import { futuresTotalUsdt } from "../services/exchanges/binanceFutures";
 
 /**
  * Hisob ulash logikasi:
@@ -29,6 +30,8 @@ const connectSchema = z.object({
   server: z.string().min(2).optional(), // faqat MT5 uchun: broker server nomi
   mode: z.enum(["SIGNAL_ONLY", "AUTO_TRADE"]).default("SIGNAL_ONLY"),
   riskLevel: z.number().int().min(1).max(3).default(2),
+  // FUTURES faqat Binance uchun: AI SELL signallarda short ham ochadi
+  marketType: z.enum(["SPOT", "FUTURES"]).default("SPOT"),
 });
 
 const updateSchema = z.object({
@@ -36,6 +39,7 @@ const updateSchema = z.object({
   mode: z.enum(["SIGNAL_ONLY", "AUTO_TRADE"]).optional(),
   riskLevel: z.number().int().min(1).max(3).optional(),
   isConnected: z.boolean().optional(),
+  marketType: z.enum(["SPOT", "FUTURES"]).optional(),
 });
 
 function serialize(account: any) {
@@ -46,6 +50,7 @@ function serialize(account: any) {
     server: account.server ?? null,
     isConnected: account.isConnected,
     mode: account.mode,
+    marketType: account.marketType ?? "SPOT",
     riskLevel: account.riskLevel,
     balanceUsd: account.balanceUsd,
     createdAt: account.createdAt,
@@ -89,18 +94,51 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
   let initialBalance = 1000;
   let connectionNotice = "";
 
+  // FUTURES rejimi hozircha faqat Binance'da qo'llab-quvvatlanadi
+  if (data.marketType === "FUTURES" && data.exchange !== "Binance") {
+    throw new AppError("FUTURES rejimi hozircha faqat Binance uchun mavjud. Boshqa birjalar uchun SPOT tanlang.", 400);
+  }
+
   if (adapter) {
     if (adapter.requiresPassphrase && !data.passphrase) {
       throw new AppError(`${adapter.id} hisobini ulash uchun API passphrase (maxfiy ibora) ham kiritilishi shart.`, 400);
     }
 
     try {
-      initialBalance = await adapter.fetchQuoteBalance({ apiKey: data.apiKey, apiSecret: data.apiSecret, passphrase: data.passphrase });
+      // Futures hisob uchun kalitlar futures API'da tekshiriladi (futures
+      // ruxsati yo'q kalit shu yerda darhol aniqlanadi)
+      initialBalance =
+        data.marketType === "FUTURES"
+          ? await futuresTotalUsdt({ apiKey: data.apiKey, apiSecret: data.apiSecret })
+          : await adapter.fetchQuoteBalance({ apiKey: data.apiKey, apiSecret: data.apiSecret, passphrase: data.passphrase });
+
+      // Xavfsizlik: pul yechish (withdrawal) yoqilgan Binance kaliti RAD
+      // ETILADI — bot buzilgan taqdirda ham mablag'ni yechib bo'lmasligi kerak
+      if (data.exchange === "Binance") {
+        const restrictions = await fetchApiKeyRestrictions(data.apiKey, data.apiSecret);
+        if (restrictions?.withdrawalsEnabled) {
+          throw new AppError(
+            "Bu API kalitda PUL YECHISH (withdrawal) ruxsati yoqilgan — xavfsizlik uchun bunday kalit qabul qilinmaydi. " +
+            "Binance'da withdrawal ruxsatisiz yangi kalit yarating (faqat 'Enable Reading' va 'Enable Spot Trading'" +
+            (data.marketType === "FUTURES" ? " + 'Enable Futures'" : "") + " yoqilgan bo'lsin).",
+            400
+          );
+        }
+        if (data.marketType === "FUTURES" && restrictions && !restrictions.futuresEnabled) {
+          throw new AppError(
+            "Bu API kalitda Futures ruxsati yo'q. Binance'da kalit sozlamalaridan 'Enable Futures'ni yoqing yoki SPOT rejimini tanlang.",
+            400
+          );
+        }
+      }
       connectionNotice =
         exchangeMode() === "live"
           ? ` Hisobingiz ${adapter.id}'ning HAQIQIY (live) muhitiga ulandi - AI sizning real mablag'ingiz bilan ishlaydi.`
           : ` Hisobingiz hozircha ${adapter.id} TESTNET/sinov muhitiga ulangan - AI sun'iy test mablag'i bilan ishlaydi, real pulingizga hech qanday ta'sir qilmaydi.`;
     } catch (err) {
+      // Ichkarida ataylab tashlangan xato (withdrawal/futures ruxsat tekshiruvi)
+      // o'z xabari bilan qaytadi
+      if (err instanceof AppError) throw err;
       if (err instanceof ExchangeApiError && err.providerCode !== undefined) {
         // Birja o'zi aniq xato kodi bilan rad etdi - bu haqiqatan ham kalit/ruxsat muammosi
         throw new AppError(
@@ -132,6 +170,7 @@ export const connectAccount = asyncHandler(async (req: AuthedRequest, res: Respo
       passphraseEncrypted: data.passphrase ? encryptSecret(data.passphrase, `${accountId}:passphrase`) : undefined,
       server: data.exchange === "MT5" ? data.server : undefined,
       mode: data.mode,
+      marketType: data.marketType,
       riskLevel: data.riskLevel,
       balanceUsd: initialBalance,
     },
@@ -239,7 +278,10 @@ export const syncBalance = asyncHandler(async (req: AuthedRequest, res: Response
       : undefined,
   };
 
-  const balanceUsd = await adapter.fetchQuoteBalance(credentials);
+  const balanceUsd =
+    account.marketType === "FUTURES"
+      ? await futuresTotalUsdt(credentials)
+      : await adapter.fetchQuoteBalance(credentials);
   await prisma.brokerAccount.update({ where: { id: account.id }, data: { balanceUsd } });
 
   res.json({ balanceUsd, synced: true });
